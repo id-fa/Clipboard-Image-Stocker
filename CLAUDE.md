@@ -15,7 +15,7 @@
 # 開発起動
 ./.venv/Scripts/python.exe -m stocker
 
-# テスト (54 件)
+# テスト (63 件)
 ./.venv/Scripts/python.exe -m pytest tests/
 
 # ポータブル zip ビルド
@@ -66,12 +66,22 @@
 - 受信: `ThumbnailView` に `setDragDropMode(DragDrop)` + `viewport().setAcceptDrops(True)` + `Model.canDropMimeData` を返す。これらの 1 つでも欠けると外部からの D&D が無視される。
 - 送信: `Model.mimeData()` が `text/uri-list` + 独自 `application/x-stocker-items` (送信元 root + rel をJSON 化) を載せる。Explorer は `text/uri-list` → `CF_HDROP` に自動変換。
 
+### クリップボード自動取込
+`core/clipboard_watcher.py`:
+- `QClipboard.dataChanged` を購読。トグル ON 時のみ画像があれば `PasteQueue.enqueue()` に流す。保存先は `last_active_root` (PasteQueue の target_root)。
+- 同一画像の再保存抑制は **フィンガープリント** (W×H + format + sizeInBytes + 四隅ピクセル) を直前のものと比較。dataChanged の重複発火と自分の Copy エコーを吸収する。
+- `note_self_copy(qimg)`: Stocker 自身が `copy_image_to_clipboard()` でコピーする直前に呼んでフィンガープリントを記録 → 次の dataChanged を黙殺。
+- `set_autocapture(enabled)` 切替時には現在のクリップボード画像のフィンガープリントをシードに使い、起動直後の既存画像を再取込しない。
+- 設定: `AppConfig.clipboard_autocapture: bool` (デフォルト OFF / プライバシ重視)。
+
 ### サイドバー D&D ハイライトと Ctrl 修飾
 - `Sidebar.dragMoveEvent` がカーソル下のフォルダノードを `DROP_HIGHLIGHT_BRUSH` (オレンジ半透明) で塗る (落下先を視認しやすく)
 - `Sidebar.dropEvent` で `keyboardModifiers() & ControlModifier` を判定し signal 引数 `mode_str = "copy" | "move"` に乗せる。`MoveService.perform_move(mode=…)` で挙動を切替
 
 ### ホバー拡大プレビューの落とし穴
 `HoverPreviewWindow` には **必ず `WA_TransparentForMouseEvents` + `WindowTransparentForInput`** を付ける。さもないと表示直後にプレビューがマウス下に来て `ThumbnailView.leaveEvent → cancel()` が発火し一瞬で消える。`HOVER_DELAY_MS = 1200` (`src/stocker/ui/hover_preview.py:18`)。
+
+ツールバーの「ホバー拡大」チェックボックスから `set_enabled(bool)` で全停止可能。OFF 中は `schedule()` が即 return + 表示中のプレビューも `cancel()`。設定は `AppConfig.hover_preview_enabled` (デフォルト ON)。
 
 ### ごみ箱と復元
 - `<workspace>/.trash/` に `<stem>_<ts_ms>.<ext>` で時刻スタンプ付き保存。ボリューム跨ぎは `os.replace` → `shutil.move` フォールバック。
@@ -93,6 +103,7 @@
 | `src/stocker/core/folder_manager.py` | workspace + サブフォルダ管理 |
 | `src/stocker/core/scanner.py` | 非再帰 diff スキャン |
 | `src/stocker/core/paste_queue.py` | クリップボード貼り付けキュー (核心) |
+| `src/stocker/core/clipboard_watcher.py` | Ctrl+V のブリッジ + 自動取込 (フィンガープリント dedup) |
 | `src/stocker/core/thumbnail_cache.py` | LRU + ディスクキャッシュ協調 |
 | `src/stocker/core/move_service.py` | フォルダ間移動/コピー (跨 DB トランザクション) |
 | `src/stocker/core/trash.py` | ごみ箱 + 復元 + auto_purge |
@@ -112,6 +123,7 @@
 - `test_thumbnail_cache.py` (6): LRU、500 件しきい値、SHA1 命名
 - `test_thumbnail_model.py` (4): dedupe、PENDING ↔ real swap、FS watcher 競合
 - `test_paste_queue.py` (4): 30 件連打損失ゼロ、衝突回避
+- `test_clipboard_watcher.py` (9): フィンガープリント dedup、autocapture トグル、自己コピー抑制、起動シード
 - `test_move_service.py` (7): 同一/異ボリューム、衝突採番、進捗キャンセル、日本語
 - `test_trash.py` (9): origin tracking、復元 (衝突/フォルダ消失含む)、auto_purge、index 整合性
 - `test_folder_manager.py` (5): workspace 設定、subfolder 作成、hidden 除外
@@ -124,6 +136,43 @@
 - `QImage.save(BytesIO, "PNG")` は PySide6 で動かない (`QIODevice` 必須)。Pillow との変換は `utils/qt_helpers.qimage_to_pil` の **直接 buffer コピー**を使う。
 - `from_rel(root, rel)` は内部で `\` 区切りに戻すので、Windows でそのまま `pathlib.Path` 操作可能。
 - PyInstaller spec は **15 個近くの Qt サブモジュール** (QtNetwork, QtQml, QtMultimedia, Qt3D* 等) を `excludes` する。サイズ削減のため。
+- `Ctrl+C` ショートカットは `self._view` スコープに付ける (グローバルにすると入力欄やリネーム編集と衝突)。`MainWindow.__init__` 参照。
+
+### X (Twitter) への複数枚 D&D は不可 — 必ず Ctrl+C → Ctrl+V を案内する
+
+X (Twitter) Web UI のドロップハンドラは `e.dataTransfer.files` (CF_HDROP) に加えて
+`UniformResourceLocator` / `UniformResourceLocatorW` / `CF_HTML` 中の URL も
+「添付候補」として数えるため、**3 枚以上をドラッグすると「添付できる画像は4枚までです」
+で弾かれてドロップ自体が失敗する** (実測: 2 枚は成功、3 枚以上 NG)。
+
+原因: Qt 6 が `QMimeData.setUrls()` 経由で複数 URL を渡されると、Windows IDataObject に
+以下を自動登録する。
+
+```
+CF_HDROP                     ← 想定どおり (画像枚数分のファイルパス)
+UniformResourceLocator       ← 単一 URL 形式 (1個)
+UniformResourceLocatorW      ← 単一 URL Unicode 版 (1個)
+CF_HTML                      ← URL を埋め込んだ HTML
+Ole Private Data
+```
+
+抑制不可: 以下の `QMimeData` サブクラス override をすべて検証したが
+**いずれも Windows 側登録形式に効果なし** (Qt の Windows コンバータは内部データを
+直接見るため): `hasFormat`/`formats`/`hasUrls`/`urls`/`hasText`/`hasHtml`/
+`retrieveData`、`application/x-qt-windows-mime;value="..."` への明示的空セット。
+
+`application/x-qt-windows-mime;value="HDROP"` へ raw `DROPFILES` を直書きする逃げも
+試したが、Qt の windows-mime escape は予約 ID 15 (CF_HDROP) を取れず必ず
+新規 ID (49000+) を払い出すので Chrome は CF_HDROP として認識しない。
+
+抜本対策: `pywin32` で自前の `IDataObject` + `IDropSource` + `DoDragDrop` を実装する
+しかなく作業量大。Twitter 限定の問題で他のドロップ先 (Discord / Slack / GitHub /
+Gmail / Explorer) では正常動作するため、コードでは直さず **Ctrl+C →（外部アプリで）
+Ctrl+V を推奨ワークフロー**にした。クリップボード経路では同じ複数形式が登録されるが、
+Twitter のペーストハンドラは `e.clipboardData.files` のみを見るので 4 枚まで添付可能。
+
+`Ctrl+C` を `_on_copy_files_to_clipboard` にバインド済 (`MainWindow.__init__`)。
+コンテキストメニューも「Ctrl+C ファイルをコピー」表記で発見性を確保。
 
 ## ユーザー設定の永続化
 
@@ -131,6 +180,8 @@
 - `workspace_root`, `last_active_root`, `columns` (1〜16), `sort_key/dir`
 - `sidebar_font_size` (7〜28pt)
 - `paste_format` ("png"|"jpeg"), `paste_jpeg_quality`
+- `clipboard_autocapture` (bool, default False) — クリップボード自動取込の ON/OFF
+- `hover_preview_enabled` (bool, default True) — ホバー拡大プレビューの ON/OFF
 - `trash_auto_delete_days` (0=無効)
 - 起動時に `auto_purge(workspace, trash_auto_delete_days)` を実行
 

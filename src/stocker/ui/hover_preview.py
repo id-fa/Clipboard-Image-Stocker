@@ -42,8 +42,19 @@ class HoverPreviewWindow(QWidget):
         self._signals = _LoadSignals(self)
         self._signals.ready.connect(self._on_loaded)
         self._target_token: int = 0
+        self._enabled: bool = True
+
+    def set_enabled(self, enabled: bool) -> None:
+        self._enabled = bool(enabled)
+        if not self._enabled:
+            self.cancel()
+
+    def is_enabled(self) -> bool:
+        return self._enabled
 
     def schedule(self, path: Path | None) -> None:
+        if not self._enabled:
+            return
         if path is None or not path.exists():
             self.cancel()
             return

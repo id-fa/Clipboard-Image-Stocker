@@ -83,6 +83,8 @@ class MainWindow(QMainWindow):
         self._toolbar.set_columns(cfg.columns)
         self._toolbar.set_sort(cfg.sort_key, cfg.sort_dir)
         self._toolbar.set_paste_format(cfg.paste_format)
+        self._toolbar.set_autocapture(cfg.clipboard_autocapture)
+        self._toolbar.set_hover_preview_enabled(cfg.hover_preview_enabled)
         self._toolbar.set_font_size(cfg.sidebar_font_size)
         self._toolbar.set_trash_days(cfg.trash_auto_delete_days)
         self._toolbar.blockSignals(False)
@@ -91,6 +93,8 @@ class MainWindow(QMainWindow):
         self._toolbar.columns_changed.connect(self._on_columns_changed)
         self._toolbar.sort_changed.connect(self._on_sort_changed)
         self._toolbar.paste_format_changed.connect(self._on_paste_format_changed)
+        self._toolbar.clipboard_autocapture_changed.connect(self._on_autocapture_changed)
+        self._toolbar.hover_preview_enabled_changed.connect(self._on_hover_preview_enabled_changed)
         self._toolbar.sidebar_font_size_changed.connect(self._on_sidebar_font_changed)
         self._toolbar.trash_days_changed.connect(self._on_trash_days_changed)
         self._toolbar.empty_trash_requested.connect(self._on_empty_trash)
@@ -128,6 +132,7 @@ class MainWindow(QMainWindow):
 
         # Hover preview
         self._hover_preview = HoverPreviewWindow(self)
+        self._hover_preview.set_enabled(cfg.hover_preview_enabled)
 
         # FS watcher
         self._fs_watcher = FolderWatcher(self)
@@ -142,10 +147,13 @@ class MainWindow(QMainWindow):
         self._paste_queue.backpressure_changed.connect(self._on_backpressure)
         self._paste_queue.start()
         self._clipboard = ClipboardWatcher(self._paste_queue, self)
+        self._clipboard.set_autocapture(cfg.clipboard_autocapture)
 
         # Shortcuts
         self._paste_shortcut = QShortcut(QKeySequence.StandardKey.Paste, self)
         self._paste_shortcut.activated.connect(self._on_paste_shortcut)
+        self._copy_files_shortcut = QShortcut(QKeySequence.StandardKey.Copy, self._view)
+        self._copy_files_shortcut.activated.connect(self._on_copy_files_to_clipboard)
         self._rename_shortcut = QShortcut(QKeySequence("F2"), self._view)
         self._rename_shortcut.activated.connect(self._on_rename_shortcut)
         self._delete_shortcut = QShortcut(QKeySequence("Delete"), self._view)
@@ -333,6 +341,16 @@ class MainWindow(QMainWindow):
         self._cfg.paste_format = fmt
         save_config(self._cfg)
         self._paste_queue.set_format(fmt, self._cfg.paste_jpeg_quality)
+
+    def _on_autocapture_changed(self, enabled: bool) -> None:
+        self._cfg.clipboard_autocapture = bool(enabled)
+        save_config(self._cfg)
+        self._clipboard.set_autocapture(bool(enabled))
+
+    def _on_hover_preview_enabled_changed(self, enabled: bool) -> None:
+        self._cfg.hover_preview_enabled = bool(enabled)
+        save_config(self._cfg)
+        self._hover_preview.set_enabled(bool(enabled))
 
     def _on_sidebar_font_changed(self, points: int) -> None:
         self._cfg.sidebar_font_size = points
@@ -686,7 +704,7 @@ class MainWindow(QMainWindow):
                 menu.addSeparator()
                 menu.addAction(QAction("画像をコピー", self,
                                         triggered=self._on_copy_image_to_clipboard))
-                menu.addAction(QAction("ファイルをコピー", self,
+                menu.addAction(QAction("Ctrl+C ファイルをコピー", self,
                                         triggered=self._on_copy_files_to_clipboard))
                 menu.addSeparator()
                 menu.addAction(QAction("F2 名前を変更", self,
@@ -733,6 +751,7 @@ class MainWindow(QMainWindow):
         if qimg.isNull():
             QMessageBox.warning(self, "コピー失敗", f"画像を読み込めませんでした: {item.name}")
             return
+        self._clipboard.note_self_copy(qimg)
         copy_image_to_clipboard(qimg)
 
     def _on_copy_files_to_clipboard(self) -> None:

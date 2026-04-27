@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
+    QCheckBox,
     QComboBox,
     QLabel,
     QSlider,
@@ -19,6 +20,8 @@ class StockerToolbar(QToolBar):
     set_workspace_requested = Signal()
     add_subfolder_requested = Signal()
     paste_format_changed = Signal(str)  # "png" | "jpeg"
+    clipboard_autocapture_changed = Signal(bool)
+    hover_preview_enabled_changed = Signal(bool)
     sidebar_font_size_changed = Signal(int)
     trash_days_changed = Signal(int)
     empty_trash_requested = Signal()
@@ -67,6 +70,21 @@ class StockerToolbar(QToolBar):
             lambda _i: self.paste_format_changed.emit(self._paste_fmt.currentData())
         )
 
+        self._auto_capture = QCheckBox("自動取込", self)
+        self._auto_capture.setToolTip(
+            "クリップボードに新しい画像が来たら自動的に現在のフォルダへ保存します"
+        )
+        self.addWidget(self._auto_capture)
+        self._auto_capture.toggled.connect(self.clipboard_autocapture_changed.emit)
+
+        self._hover_preview = QCheckBox("ホバー拡大", self)
+        self._hover_preview.setToolTip(
+            "サムネイル上で停止すると拡大プレビューを表示します"
+        )
+        self._hover_preview.setChecked(True)
+        self.addWidget(self._hover_preview)
+        self._hover_preview.toggled.connect(self.hover_preview_enabled_changed.emit)
+
         self.addSeparator()
         self.addWidget(QLabel(" ツリー字: "))
         self._font_spin = QSpinBox(self)
@@ -103,6 +121,12 @@ class StockerToolbar(QToolBar):
         idx = self._paste_fmt.findData(fmt)
         if idx >= 0:
             self._paste_fmt.setCurrentIndex(idx)
+
+    def set_autocapture(self, enabled: bool) -> None:
+        self._auto_capture.setChecked(bool(enabled))
+
+    def set_hover_preview_enabled(self, enabled: bool) -> None:
+        self._hover_preview.setChecked(bool(enabled))
 
     def set_font_size(self, points: int) -> None:
         self._font_spin.setValue(points)
