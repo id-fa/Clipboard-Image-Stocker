@@ -15,12 +15,12 @@
 # 開発起動
 ./.venv/Scripts/python.exe -m stocker
 
-# テスト (63 件)
+# テスト (79 件)
 ./.venv/Scripts/python.exe -m pytest tests/
 
-# ポータブル zip ビルド
-./.venv/Scripts/pyinstaller.exe --clean build/stocker.spec --distpath dist --workpath build/build
-# その後 dist/Stocker/portable.flag をタッチして Compress-Archive
+# ポータブル zip ビルド (PyInstaller → portable.flag → Compress-Archive を一括)
+pwsh ./build/make_portable.ps1
+# 出力: dist/Stocker-v<pyproject.version>-win64.zip
 ```
 
 凍結 exe を起動した状態でテストや再ビルドをすると `python3.dll` がロックされる。先に `Get-Process Stocker | Stop-Process -Force` する。
@@ -92,28 +92,58 @@
 ### クロス DB 操作
 `MainWindow._dbs: dict[Path, MetadataDB]` で開いた DB をキャッシュ。フォルダ移動・トラッシュ・復元は src DB と dst DB の両方を必要とするので、`_db(path)` で必要に応じて開いて使う。`closeEvent` で全 DB クローズ。
 
+### フォルダのリネーム
+サイドバー右クリック「名前を変更...」で `FolderManager.rename_folder()` を呼ぶ。ワークスペース基点フォルダは UI/API 両方で拒否される (`cfg.workspace_root` と整合させない)。`MainWindow._on_rename_folder_requested` の手順:
+1. **対象配下の全 DB をクローズ**してから rename (Windows は SQLite ファイルロックでディレクトリ rename が失敗する)
+2. `fs_watcher.watch(None)` と `paste_queue.set_target_root(None)` で旧パス参照を切る
+3. `Path.rename()` 実行
+4. `trash.rewrite_origin_paths(workspace, old_rel, new_rel)` で `trash_index.json` の `origin_folder_rel` をサブツリー含めて更新 (これがないと復元先がフォルダ消失扱いになる)
+5. アクティブパスがリネームツリー配下なら新パスに翻訳して `_activate_folder()` で再構築 (DB 再オープン・モデル replace・FS watcher 復帰・`cfg.last_active_root` 永続化を一括)
+
+### 国際化 (i18n)
+`src/stocker/i18n.py` は辞書ベースの軽量 i18n (Qt Linguist 不採用 ─ ビルドステップ追加と PyInstaller の data 取り込みを避けるため)。
+- `detect_language()` は `QLocale.system().language()` が日本語なら `"ja"`、それ以外は `"en"`。`main.py` で `QApplication` 構築直後に `set_language(detect_language())` を呼ぶ。
+- `tr(key, **fmt)` は active lang → DEFAULT_LANG (`"en"`) → `"ja"` → key 自体 の順にフォールバック。`{name}` 等は `str.format()` で展開。
+- カタログは `i18n.py` の `_CATALOG` に全部 inline。UI 文字列だけでなく `core/folder_manager.py`, `core/trash.py`, `core/move_service.py`, `core/paste_queue.py` の `ValueError`／エラーメッセージも `tr()` 経由 (UI で `QMessageBox` 表示されるため)。
+- ログメッセージ・コミットログ・テストデータの日本語はそのまま (ユーザー目に触れない)。
+
+### アプリアイコン
+`src/stocker/assets/icons/` 配下に同梱:
+- `app.png` (256×256, ランタイム `QApplication.setWindowIcon` 用 ─ Qt がタスクバー/Alt+Tab 用にスケーリング)
+- `app.ico` (16/24/32/48/64/128/256 マルチサイズ, PyInstaker spec の `icon=` で EXE に埋込)
+
+マスター画像はリポジトリルートの `icon_base.png`。Pillow で 256 PNG と マルチサイズ ICO を派生生成する (再生成が必要なら同様の Pillow ワンライナーで)。パッケージ内部に置くことで `db/schema.sql` と同じ `Path(__file__).resolve().parent / ...` パターンで参照でき、PyInstaller でも `datas` に追加するだけで `_internal/stocker/assets/icons/` に展開される。
+
+### About ダイアログ
+ツールバー右端「バージョン情報...」(EN: "About...") から `QMessageBox.about()`。表示内容は `app_paths.py` の `APP_VERSION`, `APP_AUTHOR`, `APP_HOMEPAGE` を `tr("about.body", ...)` の HTML テンプレートに差し込む。URL は `<a href>` でクリック → ブラウザ起動。`pyproject.toml` の `version` と `APP_VERSION` は揃える運用 (`make_portable.ps1` が pyproject から zip ファイル名を作るため)。
+
 ## ファイル構成 (主要)
 
 | ファイル | 役割 |
 |---|---|
 | `src/stocker/main.py` | QApplication ブートストラップ、UTF-8 強制、i18n 言語選択 |
 | `src/stocker/i18n.py` | 軽量 i18n: 辞書カタログ + `tr()` + `QLocale` 検出 (ja/en) |
-| `src/stocker/app_paths.py` | パス定数 (`STOCKER_DIRNAME=".stocker"`, `TRASH_DIRNAME=".trash"`, `HIDDEN_DIR_NAMES`) |
+| `src/stocker/assets/icons/` | アプリアイコン (`app.png` 256px ランタイム用 / `app.ico` マルチサイズ EXE 埋込用)。マスター画像 `icon_base.png` をリポジトリルートに保持、Pillow で派生生成 |
+| `src/stocker/app_paths.py` | パス定数 (`STOCKER_DIRNAME=".stocker"`, `TRASH_DIRNAME=".trash"`, `HIDDEN_DIR_NAMES`) + アプリメタ (`APP_NAME`, `APP_VERSION`, `APP_AUTHOR`, `APP_HOMEPAGE`) |
 | `src/stocker/config.py` | `AppConfig` dataclass、`%APPDATA%/Stocker/config.json` 永続化 (ポータブル時は `./userdata/`) |
 | `src/stocker/db/metadata_db.py` | フォルダごとの SQLite (WAL, mmap, bulk upsert) |
-| `src/stocker/core/folder_manager.py` | workspace + サブフォルダ管理 |
+| `src/stocker/core/folder_manager.py` | workspace + サブフォルダ管理 (作成 / リネーム) |
 | `src/stocker/core/scanner.py` | 非再帰 diff スキャン |
 | `src/stocker/core/paste_queue.py` | クリップボード貼り付けキュー (核心) |
 | `src/stocker/core/clipboard_watcher.py` | Ctrl+V のブリッジ + 自動取込 (フィンガープリント dedup) |
 | `src/stocker/core/thumbnail_cache.py` | LRU + ディスクキャッシュ協調 |
 | `src/stocker/core/move_service.py` | フォルダ間移動/コピー (跨 DB トランザクション) |
-| `src/stocker/core/trash.py` | ごみ箱 + 復元 + auto_purge |
+| `src/stocker/core/rename_service.py` | ファイル単体リネーム (ディスク + DB を整合) |
+| `src/stocker/core/trash.py` | ごみ箱 + 復元 + auto_purge + `rewrite_origin_paths` (フォルダリネーム追従) |
 | `src/stocker/utils/clipboard_files.py` | Explorer 互換のファイル/画像コピー (Preferred DropEffect) |
-| `src/stocker/ui/main_window.py` | UI 統括ハブ (~720 行) |
-| `src/stocker/ui/sidebar.py` | ツリーサイドバー + D&D ハイライト |
+| `src/stocker/ui/main_window.py` | UI 統括ハブ (~960 行) |
+| `src/stocker/ui/toolbar.py` | ツールバー (列数/ソート/貼り付け形式/自動取込/ホバー/ツリー字/ごみ箱/About) |
+| `src/stocker/ui/sidebar.py` | ツリーサイドバー + D&D ハイライト + フォルダリネーム |
 | `src/stocker/ui/thumbnail_view.py` | 仮想化 IconMode QListView |
 | `src/stocker/ui/thumbnail_model.py` | QAbstractListModel + dedupe + mime |
 | `src/stocker/ui/hover_preview.py` | フローティングプレビュー (mouse-transparent) |
+| `build/stocker.spec` | PyInstaller spec (icon 埋込・assets バンドル・15+ Qt サブモジュール除外) |
+| `build/make_portable.ps1` | `pyinstaller` → `portable.flag` → `Compress-Archive` を一括実行 |
 
 ## テスト構成
 
@@ -126,9 +156,10 @@
 - `test_paste_queue.py` (4): 30 件連打損失ゼロ、衝突回避
 - `test_clipboard_watcher.py` (9): フィンガープリント dedup、autocapture トグル、自己コピー抑制、起動シード
 - `test_move_service.py` (7): 同一/異ボリューム、衝突採番、進捗キャンセル、日本語
-- `test_trash.py` (9): origin tracking、復元 (衝突/フォルダ消失含む)、auto_purge、index 整合性
-- `test_folder_manager.py` (5): workspace 設定、subfolder 作成、hidden 除外
+- `test_trash.py` (12): origin tracking、復元 (衝突/フォルダ消失含む)、auto_purge、index 整合性、フォルダリネーム後の origin 追従
+- `test_folder_manager.py` (10): workspace 設定、subfolder 作成、hidden 除外、リネーム (workspace 拒否/不正名/衝突/外部拒否)
 - `test_clipboard_files.py` (5): URL roundtrip、DropEffect バイト列確認、画像コピー
+- `test_i18n.py` (8): ja/en 切替、format kwargs、未知キーフォールバック、`detect_language()` ホスト非依存
 
 ## 既知の癖・注意点
 
@@ -197,4 +228,6 @@ Twitter のペーストハンドラは `e.clipboardData.files` のみを見る�
 
 - ポータブル zip 形式 (約 52 MB)
 - `dist/Stocker/portable.flag` の有無で `userdata/` モードに切替 (`app_paths.is_portable()`)
-- `Stocker.exe` は約 2.6 MB のランチャ + `_internal/` (PySide6 ランタイム)
+- `Stocker.exe` は約 2.8 MB のランチャ (アイコン埋込済) + `_internal/` (PySide6 ランタイム + `stocker/assets/icons/` + `stocker/db/schema.sql`)
+- バージョンは `pyproject.toml` の `version` と `app_paths.APP_VERSION` の 2 箇所を揃える運用 (前者は zip ファイル名 / 後者は About ダイアログ)
+- 配布は `build/make_portable.ps1` 1 コマンドで完結 (PyInstaller → portable.flag → Compress-Archive)

@@ -15,6 +15,7 @@ a = Analysis(
     datas=[
         (str(ROOT / "src" / "stocker" / "db" / "schema.sql"), "stocker/db"),
         (str(ROOT / "src" / "stocker" / "db" / "migrations"), "stocker/db/migrations"),
+        (str(ROOT / "src" / "stocker" / "assets" / "icons"), "stocker/assets/icons"),
     ],
     hiddenimports=[],
     excludes=[
@@ -52,7 +53,7 @@ exe = EXE(
     [],
     exclude_binaries=True,
     name="Stocker",
-    icon=None,  # set to "assets/icons/app.ico" once you add one
+    icon=str(ROOT / "src" / "stocker" / "assets" / "icons" / "app.ico"),
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,

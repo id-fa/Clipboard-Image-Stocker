@@ -21,6 +21,7 @@ from PySide6.QtWidgets import (
     QStatusBar,
 )
 
+from stocker.app_paths import APP_AUTHOR, APP_HOMEPAGE, APP_VERSION
 from stocker.config import AppConfig, save_config
 from stocker.i18n import tr
 from stocker.core.clipboard_watcher import ClipboardWatcher
@@ -99,6 +100,7 @@ class MainWindow(QMainWindow):
         self._toolbar.sidebar_font_size_changed.connect(self._on_sidebar_font_changed)
         self._toolbar.trash_days_changed.connect(self._on_trash_days_changed)
         self._toolbar.empty_trash_requested.connect(self._on_empty_trash)
+        self._toolbar.about_requested.connect(self._on_about)
 
         # Center: splitter
         self._splitter = QSplitter(Qt.Orientation.Horizontal, self)
@@ -457,6 +459,13 @@ class MainWindow(QMainWindow):
         if self._active_root is not None and self._active_root == trash_svc.trash_root(ws):
             self._activate_folder(self._active_root)  # refresh
         log.info("emptied trash: %d files", deleted)
+
+    def _on_about(self) -> None:
+        QMessageBox.about(
+            self,
+            tr("about.title"),
+            tr("about.body", version=APP_VERSION, author=APP_AUTHOR, url=APP_HOMEPAGE),
+        )
 
     # ---- thumbnail pipeline ----
 

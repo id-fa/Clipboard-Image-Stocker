@@ -8,9 +8,10 @@ venv/
 .vscode/
 .pytest_cache/
 .ruff_cache/
-build/__pycache__/
 dist/
-build/build/
+build/*
+!build/stocker.spec
+!build/make_portable.ps1
 *.spec.bak
 .stocker/
 userdata/

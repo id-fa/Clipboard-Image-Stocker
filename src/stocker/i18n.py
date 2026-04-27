@@ -93,6 +93,23 @@ _CATALOG: dict[str, dict[str, str]] = {
     "toolbar.trash_keep_label": {"ja": " ごみ箱保持: ", "en": " Trash keep: "},
     "toolbar.days_suffix": {"ja": " 日 (0=無制限)", "en": " days (0=unlimited)"},
     "toolbar.empty_trash": {"ja": "ごみ箱を空にする", "en": "Empty trash"},
+    "toolbar.about": {"ja": "バージョン情報...", "en": "About..."},
+
+    # ---- about dialog ----
+    "about.title": {
+        "ja": "Clipboard Image Stocker について",
+        "en": "About Clipboard Image Stocker",
+    },
+    "about.body": {
+        "ja": "<h3>Clipboard Image Stocker</h3>"
+              "<p>バージョン: {version}<br>"
+              "作者: {author}<br>"
+              "配布元: <a href=\"{url}\">{url}</a></p>",
+        "en": "<h3>Clipboard Image Stocker</h3>"
+              "<p>Version: {version}<br>"
+              "Author: {author}<br>"
+              "Homepage: <a href=\"{url}\">{url}</a></p>",
+    },
 
     # ---- sidebar ----
     "sidebar.header": {"ja": "フォルダ", "en": "Folders"},

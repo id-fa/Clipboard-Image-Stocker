@@ -16,7 +16,10 @@ try:
 except Exception:  # noqa: BLE001
     pass
 
+from pathlib import Path
+
 from PySide6.QtCore import Qt
+from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QApplication
 
 from stocker.app_paths import APP_NAME
@@ -24,6 +27,8 @@ from stocker.config import load_config
 from stocker.i18n import detect_language, set_language
 from stocker.logging_setup import setup_logging
 from stocker.ui.main_window import MainWindow
+
+_ICON_PATH = Path(__file__).resolve().parent / "assets" / "icons" / "app.png"
 
 
 def main() -> int:
@@ -34,6 +39,8 @@ def main() -> int:
     app = QApplication(sys.argv)
     app.setApplicationName(APP_NAME)
     app.setOrganizationName("Stocker")
+    if _ICON_PATH.exists():
+        app.setWindowIcon(QIcon(str(_ICON_PATH)))
 
     set_language(detect_language())
 

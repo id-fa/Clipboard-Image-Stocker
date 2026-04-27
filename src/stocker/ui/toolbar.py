@@ -27,6 +27,7 @@ class StockerToolbar(QToolBar):
     sidebar_font_size_changed = Signal(int)
     trash_days_changed = Signal(int)
     empty_trash_requested = Signal()
+    about_requested = Signal()
 
     def __init__(self, parent: QWidget | None = None):
         super().__init__("Main", parent)
@@ -101,6 +102,9 @@ class StockerToolbar(QToolBar):
         self.addWidget(self._trash_days)
         self._trash_days.valueChanged.connect(self.trash_days_changed.emit)
         self.addAction(tr("toolbar.empty_trash"), self.empty_trash_requested.emit)
+
+        self.addSeparator()
+        self.addAction(tr("toolbar.about"), self.about_requested.emit)
 
     # ---- public ----
 
