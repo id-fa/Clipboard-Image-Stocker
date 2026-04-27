@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from stocker.app_paths import STOCKER_DIRNAME, TRASH_DIRNAME
+from stocker.i18n import tr
 from stocker.utils.paths import avoid_collision, normalize_rel
 
 log = logging.getLogger(__name__)
@@ -76,6 +77,31 @@ def _save_index(workspace: Path, idx: dict[str, dict]) -> None:
     tmp = p.with_suffix(".json.tmp")
     tmp.write_text(json.dumps(idx, ensure_ascii=False, indent=2), encoding="utf-8")
     tmp.replace(p)
+
+
+def rewrite_origin_paths(workspace: Path, old_rel: str, new_rel: str) -> int:
+    """Re-key `origin_folder_rel` entries after a managed folder is renamed.
+
+    Updates entries where `origin_folder_rel == old_rel` or starts with
+    `old_rel + "/"`. Both args are workspace-relative, forward-slash form.
+    Returns the number of entries that were rewritten.
+    """
+    if not old_rel or old_rel == new_rel:
+        return 0
+    idx = _load_index(workspace)
+    n = 0
+    prefix = old_rel + "/"
+    for meta in idx.values():
+        cur = str(meta.get("origin_folder_rel", ""))
+        if cur == old_rel:
+            meta["origin_folder_rel"] = new_rel
+            n += 1
+        elif cur.startswith(prefix):
+            meta["origin_folder_rel"] = new_rel + cur[len(old_rel):]
+            n += 1
+    if n:
+        _save_index(workspace, idx)
+    return n
 
 
 def get_origin(workspace: Path, trashed_basename: str) -> tuple[str, str] | None:
@@ -168,7 +194,7 @@ def restore(
         if not src.exists():
             results.append(
                 RestoreResult(restored_abs=src, origin_folder_rel=origin_rel,
-                              error="ごみ箱内にファイルがありません")
+                              error=tr("trash.not_in_trash"))
             )
             idx.pop(basename, None)
             continue
@@ -178,7 +204,7 @@ def restore(
             except OSError as e:
                 results.append(
                     RestoreResult(restored_abs=src, origin_folder_rel=origin_rel,
-                                  error=f"復元先を作成できません: {e}")
+                                  error=tr("trash.restore_target_create_failed", err=e))
                 )
                 continue
         target = avoid_collision(target_folder / original_name)

@@ -18,6 +18,7 @@ from pathlib import Path
 from stocker.core.models import FileItem
 from stocker.core.thumbnail_cache import ThumbnailCache, disk_thumb_path
 from stocker.db.metadata_db import MetadataDB
+from stocker.i18n import tr
 from stocker.utils.paths import avoid_collision, from_rel, normalize_rel
 
 log = logging.getLogger(__name__)
@@ -70,12 +71,12 @@ def perform_move(
             src_root = ref.src_root.resolve()
             if src_root == dst_root:
                 # Same-folder no-op (move within self)
-                result.failed.append((ref, "同一フォルダへの移動はできません"))
+                result.failed.append((ref, tr("move.same_folder")))
                 continue
             src_db = db_for(src_root)
             src_abs = from_rel(src_root, ref.src_rel)
             if not src_abs.exists():
-                result.failed.append((ref, f"元ファイルが存在しません: {src_abs}"))
+                result.failed.append((ref, tr("move.source_missing", src=src_abs)))
                 src_db.delete_by_rel(ref.src_rel)  # cleanup orphan record
                 continue
             target_abs = avoid_collision(dst_root / src_abs.name)

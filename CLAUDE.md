@@ -96,7 +96,8 @@
 
 | ファイル | 役割 |
 |---|---|
-| `src/stocker/main.py` | QApplication ブートストラップ、UTF-8 強制 |
+| `src/stocker/main.py` | QApplication ブートストラップ、UTF-8 強制、i18n 言語選択 |
+| `src/stocker/i18n.py` | 軽量 i18n: 辞書カタログ + `tr()` + `QLocale` 検出 (ja/en) |
 | `src/stocker/app_paths.py` | パス定数 (`STOCKER_DIRNAME=".stocker"`, `TRASH_DIRNAME=".trash"`, `HIDDEN_DIR_NAMES`) |
 | `src/stocker/config.py` | `AppConfig` dataclass、`%APPDATA%/Stocker/config.json` 永続化 (ポータブル時は `./userdata/`) |
 | `src/stocker/db/metadata_db.py` | フォルダごとの SQLite (WAL, mmap, bulk upsert) |

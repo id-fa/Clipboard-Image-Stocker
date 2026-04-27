@@ -19,6 +19,7 @@ from PySide6.QtGui import QImage
 
 from stocker.core.image_io import save_image_atomic
 from stocker.core.models import FileItem, PendingPaste, PendingStatus
+from stocker.i18n import tr
 from stocker.utils.paths import avoid_collision, normalize_rel
 
 log = logging.getLogger(__name__)
@@ -132,7 +133,7 @@ class _Worker(QThread):
     def _handle(self, p: PendingPaste) -> None:
         root = self._owner.target_root()
         if root is None:
-            self._owner.paste_failed.emit(p.pid, "保存先フォルダが未指定")
+            self._owner.paste_failed.emit(p.pid, tr("paste.no_target"))
             return
         fmt, quality = self._owner.get_format()
         target = avoid_collision(root / p.suggested_name)

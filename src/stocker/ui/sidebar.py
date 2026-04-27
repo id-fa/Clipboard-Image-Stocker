@@ -14,6 +14,7 @@ from PySide6.QtGui import QBrush, QColor, QFont, QStandardItem, QStandardItemMod
 from PySide6.QtWidgets import QTreeView
 
 from stocker.app_paths import TRASH_DIRNAME
+from stocker.i18n import tr
 
 log = logging.getLogger(__name__)
 
@@ -28,6 +29,7 @@ class Sidebar(QTreeView):
     folder_selected = Signal(object)  # Path
     trash_selected = Signal()
     create_subfolder_requested = Signal(object)  # parent Path | None
+    rename_folder_requested = Signal(object)  # Path of the folder to rename
     # mode_str: "move" (default) or "copy" — set when Ctrl is held during the drop.
     drop_stocker_items_to_folder = Signal(object, bytes, str)
     drop_external_files_to_folder = Signal(object, list)
@@ -35,7 +37,7 @@ class Sidebar(QTreeView):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._model = QStandardItemModel(self)
-        self._model.setHorizontalHeaderLabels(["フォルダ"])
+        self._model.setHorizontalHeaderLabels([tr("sidebar.header")])
         self.setModel(self._model)
         self.setHeaderHidden(True)
         self.setEditTriggers(QTreeView.EditTrigger.NoEditTriggers)
@@ -82,7 +84,7 @@ class Sidebar(QTreeView):
         trash_item.setData(str(workspace / TRASH_DIRNAME), PATH_ROLE)
         trash_item.setData("trash", KIND_ROLE)
         trash_item.setEditable(False)
-        trash_item.setToolTip("ごみ箱")
+        trash_item.setToolTip(tr("sidebar.trash_tooltip"))
         self._model.appendRow(trash_item)
 
         self.expandAll()
@@ -95,7 +97,7 @@ class Sidebar(QTreeView):
                 return
 
     def _trash_label(self, count: int) -> str:
-        return f"🗑 ごみ箱 ({count})" if count else "🗑 ごみ箱"
+        return tr("sidebar.trash_with_count", n=count) if count else tr("sidebar.trash")
 
     def select_path(self, path: Path) -> None:
         target = str(path.resolve())
@@ -130,8 +132,13 @@ class Sidebar(QTreeView):
         menu = QMenu(self)
         if kind in ("workspace", "folder") and path_str:
             menu.addAction(
-                "サブフォルダを作成...",
+                tr("sidebar.menu_create_subfolder"),
                 lambda: self.create_subfolder_requested.emit(Path(path_str)),
+            )
+        if kind == "folder" and path_str:
+            menu.addAction(
+                tr("sidebar.menu_rename_folder"),
+                lambda: self.rename_folder_requested.emit(Path(path_str)),
             )
         menu.exec(e.globalPos())
 

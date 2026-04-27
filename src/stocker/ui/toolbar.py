@@ -13,6 +13,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from stocker.i18n import tr
+
 
 class StockerToolbar(QToolBar):
     columns_changed = Signal(int)
@@ -30,11 +32,11 @@ class StockerToolbar(QToolBar):
         super().__init__("Main", parent)
         self.setMovable(False)
 
-        self.addAction("ワークスペース...", self.set_workspace_requested.emit)
-        self.addAction("サブフォルダを追加", self.add_subfolder_requested.emit)
+        self.addAction(tr("toolbar.workspace"), self.set_workspace_requested.emit)
+        self.addAction(tr("toolbar.add_subfolder"), self.add_subfolder_requested.emit)
         self.addSeparator()
 
-        self.addWidget(QLabel(" 列数: "))
+        self.addWidget(QLabel(tr("toolbar.columns_label")))
         self._slider = QSlider(Qt.Orientation.Horizontal, self)
         self._slider.setRange(1, 16)
         self._slider.setValue(6)
@@ -46,22 +48,22 @@ class StockerToolbar(QToolBar):
         self._slider.valueChanged.connect(lambda v: self._cols_label.setText(str(v)))
 
         self.addSeparator()
-        self.addWidget(QLabel(" 並び順: "))
+        self.addWidget(QLabel(tr("toolbar.sort_label")))
         self._sort_key = QComboBox(self)
-        self._sort_key.addItem("ファイル名", "name")
-        self._sort_key.addItem("更新日時", "mtime")
-        self._sort_key.addItem("追加日時", "added")
+        self._sort_key.addItem(tr("toolbar.sort_name"), "name")
+        self._sort_key.addItem(tr("toolbar.sort_mtime"), "mtime")
+        self._sort_key.addItem(tr("toolbar.sort_added"), "added")
         self.addWidget(self._sort_key)
 
         self._sort_dir = QComboBox(self)
-        self._sort_dir.addItem("昇順", "asc")
-        self._sort_dir.addItem("降順", "desc")
+        self._sort_dir.addItem(tr("toolbar.sort_asc"), "asc")
+        self._sort_dir.addItem(tr("toolbar.sort_desc"), "desc")
         self.addWidget(self._sort_dir)
         self._sort_key.currentIndexChanged.connect(self._emit_sort)
         self._sort_dir.currentIndexChanged.connect(self._emit_sort)
 
         self.addSeparator()
-        self.addWidget(QLabel(" 貼り付け形式: "))
+        self.addWidget(QLabel(tr("toolbar.paste_format_label")))
         self._paste_fmt = QComboBox(self)
         self._paste_fmt.addItem("PNG", "png")
         self._paste_fmt.addItem("JPEG", "jpeg")
@@ -70,23 +72,19 @@ class StockerToolbar(QToolBar):
             lambda _i: self.paste_format_changed.emit(self._paste_fmt.currentData())
         )
 
-        self._auto_capture = QCheckBox("自動取込", self)
-        self._auto_capture.setToolTip(
-            "クリップボードに新しい画像が来たら自動的に現在のフォルダへ保存します"
-        )
+        self._auto_capture = QCheckBox(tr("toolbar.autocapture"), self)
+        self._auto_capture.setToolTip(tr("toolbar.autocapture_tooltip"))
         self.addWidget(self._auto_capture)
         self._auto_capture.toggled.connect(self.clipboard_autocapture_changed.emit)
 
-        self._hover_preview = QCheckBox("ホバー拡大", self)
-        self._hover_preview.setToolTip(
-            "サムネイル上で停止すると拡大プレビューを表示します"
-        )
+        self._hover_preview = QCheckBox(tr("toolbar.hover_preview"), self)
+        self._hover_preview.setToolTip(tr("toolbar.hover_preview_tooltip"))
         self._hover_preview.setChecked(True)
         self.addWidget(self._hover_preview)
         self._hover_preview.toggled.connect(self.hover_preview_enabled_changed.emit)
 
         self.addSeparator()
-        self.addWidget(QLabel(" ツリー字: "))
+        self.addWidget(QLabel(tr("toolbar.tree_font_label")))
         self._font_spin = QSpinBox(self)
         self._font_spin.setRange(7, 28)
         self._font_spin.setValue(12)
@@ -95,14 +93,14 @@ class StockerToolbar(QToolBar):
         self._font_spin.valueChanged.connect(self.sidebar_font_size_changed.emit)
 
         self.addSeparator()
-        self.addWidget(QLabel(" ごみ箱保持: "))
+        self.addWidget(QLabel(tr("toolbar.trash_keep_label")))
         self._trash_days = QSpinBox(self)
         self._trash_days.setRange(0, 365)
         self._trash_days.setValue(0)
-        self._trash_days.setSuffix(" 日 (0=無制限)")
+        self._trash_days.setSuffix(tr("toolbar.days_suffix"))
         self.addWidget(self._trash_days)
         self._trash_days.valueChanged.connect(self.trash_days_changed.emit)
-        self.addAction("ごみ箱を空にする", self.empty_trash_requested.emit)
+        self.addAction(tr("toolbar.empty_trash"), self.empty_trash_requested.emit)
 
     # ---- public ----
 

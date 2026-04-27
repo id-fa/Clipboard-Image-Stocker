@@ -125,6 +125,53 @@ def test_empty_trash_clears_index(tmp_path: Path):
     assert idx == {}
 
 
+def test_rewrite_origin_paths_after_folder_rename(tmp_path: Path):
+    """origin_folder_rel must follow a renamed managed subfolder so restore works."""
+    ws = _ws(tmp_path)
+    sub = ws / "古"; sub.mkdir()
+    nested = sub / "孫"; nested.mkdir()
+    other = ws / "別"; other.mkdir()
+    f1 = sub / "a.png"; f1.write_bytes(b"a")
+    f2 = nested / "b.png"; f2.write_bytes(b"b")
+    f3 = other / "c.png"; f3.write_bytes(b"c")
+    t.move_to_trash(ws, [(f1, sub), (f2, nested), (f3, other)])
+
+    n = t.rewrite_origin_paths(ws, "古", "新")
+    assert n == 2  # only entries under "古" (incl. nested) are rewritten
+
+    idx = json.loads((ws / STOCKER_DIRNAME / "trash_index.json").read_text(encoding="utf-8"))
+    origins = sorted(meta["origin_folder_rel"] for meta in idx.values())
+    assert origins == ["別", "新", "新/孫"]
+
+
+def test_rewrite_origin_paths_noop_when_unchanged(tmp_path: Path):
+    ws = _ws(tmp_path)
+    sub = ws / "S"; sub.mkdir()
+    f = sub / "a.png"; f.write_bytes(b"a")
+    t.move_to_trash(ws, [(f, sub)])
+    assert t.rewrite_origin_paths(ws, "", "X") == 0
+    assert t.rewrite_origin_paths(ws, "S", "S") == 0
+
+
+def test_restore_after_folder_rename_uses_new_path(tmp_path: Path):
+    """End-to-end: rename a folder, then restore — file lands under the new name."""
+    ws = _ws(tmp_path)
+    sub = ws / "Src"; sub.mkdir()
+    f = sub / "p.png"; f.write_bytes(b"p")
+    moved = t.move_to_trash(ws, [(f, sub)])
+    basename = moved[0].trashed_abs.name
+
+    # Simulate the directory rename (FolderManager would do this in production).
+    new_sub = ws / "Dst"
+    sub.rename(new_sub)
+    t.rewrite_origin_paths(ws, "Src", "Dst")
+
+    results = t.restore(ws, [basename])
+    assert results[0].error is None
+    assert results[0].restored_abs.parent == new_sub
+    assert (new_sub / "p.png").exists()
+
+
 def test_japanese_filename_roundtrip(tmp_path: Path):
     ws = _ws(tmp_path, "日本語ワーク")
     sub = ws / "保存先"; sub.mkdir()

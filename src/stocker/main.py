@@ -21,6 +21,7 @@ from PySide6.QtWidgets import QApplication
 
 from stocker.app_paths import APP_NAME
 from stocker.config import load_config
+from stocker.i18n import detect_language, set_language
 from stocker.logging_setup import setup_logging
 from stocker.ui.main_window import MainWindow
 
@@ -33,6 +34,8 @@ def main() -> int:
     app = QApplication(sys.argv)
     app.setApplicationName(APP_NAME)
     app.setOrganizationName("Stocker")
+
+    set_language(detect_language())
 
     cfg = load_config()
     win = MainWindow(cfg)

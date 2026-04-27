@@ -22,6 +22,7 @@ from PySide6.QtWidgets import (
 )
 
 from stocker.config import AppConfig, save_config
+from stocker.i18n import tr
 from stocker.core.clipboard_watcher import ClipboardWatcher
 from stocker.core.folder_manager import FolderManager
 from stocker.core.fs_watcher import FolderWatcher
@@ -52,7 +53,7 @@ from stocker.utils.clipboard_files import (
     copy_image_to_clipboard,
     file_urls_from_clipboard,
 )
-from stocker.utils.paths import from_rel
+from stocker.utils.paths import from_rel, normalize_rel
 
 log = logging.getLogger(__name__)
 
@@ -109,6 +110,7 @@ class MainWindow(QMainWindow):
         self._sidebar.folder_selected.connect(self._on_folder_selected)
         self._sidebar.trash_selected.connect(self._on_trash_selected)
         self._sidebar.create_subfolder_requested.connect(self._on_create_subfolder_under)
+        self._sidebar.rename_folder_requested.connect(self._on_rename_folder_requested)
         self._sidebar.drop_stocker_items_to_folder.connect(self._on_drop_to_sidebar)
         self._sidebar.drop_external_files_to_folder.connect(self._on_drop_external_to_sidebar)
         self._splitter.addWidget(self._sidebar)
@@ -190,25 +192,22 @@ class MainWindow(QMainWindow):
 
     def _prompt_workspace_or_default(self) -> None:
         msg = QMessageBox(self)
-        msg.setWindowTitle("ワークスペース選択")
-        msg.setText(
-            "画像を蓄積するワークスペース基点フォルダを選択してください。\n"
-            "今後追加するサブフォルダはこの配下に作成されます。"
-        )
+        msg.setWindowTitle(tr("dialog.workspace_select_title"))
+        msg.setText(tr("dialog.workspace_select_body"))
         msg.setStandardButtons(
             QMessageBox.StandardButton.Open | QMessageBox.StandardButton.Cancel
         )
         if msg.exec() != QMessageBox.StandardButton.Open:
             return
-        d = QFileDialog.getExistingDirectory(self, "ワークスペース基点フォルダを選択")
+        d = QFileDialog.getExistingDirectory(self, tr("dialog.workspace_select_picker"))
         if d:
             try:
                 self._folder_manager.set_workspace(Path(d))
             except ValueError as e:
-                QMessageBox.warning(self, "エラー", str(e))
+                QMessageBox.warning(self, tr("dialog.error"), str(e))
 
     def _on_set_workspace(self) -> None:
-        d = QFileDialog.getExistingDirectory(self, "ワークスペース基点フォルダを選択")
+        d = QFileDialog.getExistingDirectory(self, tr("dialog.workspace_select_picker"))
         if not d:
             return
         # Close any open DBs from the previous workspace
@@ -219,7 +218,7 @@ class MainWindow(QMainWindow):
         try:
             self._folder_manager.set_workspace(Path(d))
         except ValueError as e:
-            QMessageBox.warning(self, "エラー", str(e))
+            QMessageBox.warning(self, tr("dialog.error"), str(e))
             return
         self._refresh_sidebar()
         ws = self._folder_manager.workspace
@@ -228,7 +227,10 @@ class MainWindow(QMainWindow):
 
     def _on_add_subfolder_clicked(self) -> None:
         if not self._folder_manager.has_workspace():
-            QMessageBox.information(self, "未設定", "先にワークスペースを設定してください。")
+            QMessageBox.information(
+                self, tr("dialog.not_configured"),
+                tr("dialog.configure_workspace_first"),
+            )
             return
         parent = self._active_root or self._folder_manager.workspace
         self._on_create_subfolder_under(parent)
@@ -238,18 +240,89 @@ class MainWindow(QMainWindow):
             return
         parent = parent or self._folder_manager.workspace
         name, ok = QInputDialog.getText(
-            self, "サブフォルダを作成",
-            f"親フォルダ: {parent.name}\n新しいフォルダ名:",
+            self, tr("dialog.create_subfolder_title"),
+            tr("dialog.create_subfolder_body", parent=parent.name),
         )
         if not ok or not name.strip():
             return
         try:
             new_path = self._folder_manager.create_subfolder(name.strip(), parent=parent)
         except ValueError as e:
-            QMessageBox.warning(self, "作成失敗", str(e))
+            QMessageBox.warning(self, tr("dialog.create_failed"), str(e))
             return
         self._refresh_sidebar()
         self._activate_folder(new_path)
+
+    def _on_rename_folder_requested(self, path: Path) -> None:
+        """Rename a managed subfolder in place. Workspace root is excluded."""
+        if not self._folder_manager.has_workspace():
+            return
+        ws = self._folder_manager.workspace
+        assert ws is not None
+        ws_resolved = ws.resolve()
+        old_path = path.resolve()
+        if old_path == ws_resolved:
+            QMessageBox.information(
+                self, tr("dialog.rename_disallowed"),
+                tr("dialog.workspace_rename_blocked"),
+            )
+            return
+        new_name, ok = QInputDialog.getText(
+            self, tr("dialog.rename_folder_title"),
+            tr("dialog.rename_folder_body", name=old_path.name),
+            text=old_path.name,
+        )
+        if not ok:
+            return
+        new_name = new_name.strip()
+        if not new_name or new_name == old_path.name:
+            return
+
+        old_active = self._active_root.resolve() if self._active_root else None
+
+        # Windows holds locks on open SQLite files; close every DB whose path
+        # is the renamed folder or any descendant before renaming the dir.
+        affected_db_roots = [
+            r for r in list(self._dbs.keys())
+            if r == old_path or old_path in r.parents
+        ]
+        for r in affected_db_roots:
+            self._dbs[r].close()
+            del self._dbs[r]
+
+        # Drop fs watcher and paste queue target so neither holds a stale path.
+        self._fs_watcher.watch(None)
+        self._paste_queue.set_target_root(None)
+
+        try:
+            old_rel = normalize_rel(old_path.relative_to(ws_resolved))
+            new_path = self._folder_manager.rename_folder(old_path, new_name)
+        except (ValueError, OSError) as e:
+            QMessageBox.warning(self, tr("dialog.rename_failed"), str(e))
+            if old_active is not None and old_active.exists():
+                self._activate_folder(old_active)
+            return
+
+        new_rel = normalize_rel(new_path.relative_to(ws_resolved))
+        trash_svc.rewrite_origin_paths(ws, old_rel, new_rel)
+
+        # Translate the active path if it was inside the renamed subtree.
+        new_active = old_active
+        if old_active is not None and (
+            old_active == old_path or old_path in old_active.parents
+        ):
+            try:
+                sub = old_active.relative_to(old_path)
+                new_active = (
+                    new_path / sub if str(sub) not in ("", ".") else new_path
+                ).resolve()
+            except ValueError:
+                new_active = new_path
+        if new_active is None:
+            new_active = new_path
+
+        self._refresh_sidebar()
+        self._activate_folder(new_active)
 
     def _refresh_sidebar(self) -> None:
         ws = self._folder_manager.workspace
@@ -374,7 +447,7 @@ class MainWindow(QMainWindow):
             return
         if (
             QMessageBox.question(
-                self, "確認", f"ごみ箱内の {n} 件を完全に削除します。よろしいですか？"
+                self, tr("dialog.confirm"), tr("dialog.empty_trash_body", n=n)
             )
             != QMessageBox.StandardButton.Yes
         ):
@@ -427,7 +500,7 @@ class MainWindow(QMainWindow):
             self._model.append_item(item)
         if result.failed:
             QMessageBox.warning(
-                self, "取り込みエラー",
+                self, tr("dialog.import_error"),
                 "\n".join(f"{p.name}: {err}" for p, err in result.failed[:10]),
             )
         self._cache.update_policy(db.count_files())
@@ -445,7 +518,7 @@ class MainWindow(QMainWindow):
                 self._model.append_item(item)
         if result.failed:
             QMessageBox.warning(
-                self, "取り込みエラー",
+                self, tr("dialog.import_error"),
                 "\n".join(f"{p.name}: {err}" for p, err in result.failed[:10]),
             )
         self._cache.update_policy(db.count_files())
@@ -457,7 +530,10 @@ class MainWindow(QMainWindow):
         try:
             refs = parse_payload(payload)
         except Exception as e:  # noqa: BLE001
-            QMessageBox.warning(self, "エラー", f"移動データの解析に失敗: {e}")
+            QMessageBox.warning(
+                self, tr("dialog.error"),
+                tr("dialog.move_data_parse_failed", err=e),
+            )
             return
         if not refs:
             return
@@ -472,8 +548,8 @@ class MainWindow(QMainWindow):
             self._db(r)
         self._db(dst_root)
 
-        title = "ファイルコピー中..." if mode is MoveMode.COPY else "ファイル移動中..."
-        progress = QProgressDialog(title, "キャンセル", 0, len(refs), self)
+        title = tr("dialog.copying_files") if mode is MoveMode.COPY else tr("dialog.moving_files")
+        progress = QProgressDialog(title, tr("dialog.cancel"), 0, len(refs), self)
         progress.setWindowModality(Qt.WindowModality.WindowModal)
         progress.setMinimumDuration(300)
 
@@ -502,7 +578,7 @@ class MainWindow(QMainWindow):
                     self._model.append_item(new_item)
         if result.failed:
             QMessageBox.warning(
-                self, "コピー/移動エラー",
+                self, tr("dialog.copy_move_error"),
                 "\n".join(f"{ref.src_rel}: {err}" for ref, err in result.failed[:10]),
             )
         self._update_status()
@@ -541,7 +617,10 @@ class MainWindow(QMainWindow):
 
     def _on_paste_shortcut(self) -> None:
         if self._active_root is None:
-            QMessageBox.information(self, "貼り付け不可", "まず管理フォルダを選択してください。")
+            QMessageBox.information(
+                self, tr("dialog.cannot_paste"),
+                tr("dialog.select_managed_folder_first"),
+            )
             return
         # Files on the clipboard (from Explorer cut/copy or our own
         # "ファイルをコピー") take priority over raw image data, mirroring
@@ -566,7 +645,10 @@ class MainWindow(QMainWindow):
 
     def _on_paste_failed(self, pid: int, err: str) -> None:
         self._model.remove_pending(pid)
-        QMessageBox.warning(self, "保存に失敗", f"#{pid}: {err}")
+        QMessageBox.warning(
+            self, tr("dialog.save_failed"),
+            tr("dialog.save_failed_body", pid=pid, err=err),
+        )
 
     def _on_backpressure(self, qlen: int) -> None:
         self._update_queue_label(qlen)
@@ -575,8 +657,8 @@ class MainWindow(QMainWindow):
         if qlen <= 0:
             self._queue_label.setText("")
         else:
-            warn = " ⚠" if qlen > 200 else ""
-            self._queue_label.setText(f"保存待ち: {qlen}{warn}")
+            key = "status.queue_warning" if qlen > 200 else "status.queue"
+            self._queue_label.setText(tr(key, n=qlen))
 
     def _paste_queue_qsize(self) -> int:
         return self._paste_queue._queue.qsize()  # noqa: SLF001
@@ -599,7 +681,8 @@ class MainWindow(QMainWindow):
         if not isinstance(item, FileItem) or item.kind is not FileKind.DISK:
             return
         new_name, ok = QInputDialog.getText(
-            self, "名前を変更", "新しいファイル名:", text=item.name
+            self, tr("dialog.rename_file_title"),
+            tr("dialog.rename_file_body"), text=item.name,
         )
         if not ok or not new_name or new_name == item.name:
             return
@@ -612,7 +695,7 @@ class MainWindow(QMainWindow):
         try:
             updated = rename_file(self._active_root, item, new_name, db)
         except (OSError, ValueError) as e:
-            QMessageBox.warning(self, "リネーム失敗", str(e))
+            QMessageBox.warning(self, tr("dialog.rename_failed"), str(e))
             return
         self._model.update_item(item.rel_path, updated)
 
@@ -635,8 +718,8 @@ class MainWindow(QMainWindow):
             # Permanent delete from trash
             if (
                 QMessageBox.question(
-                    self, "完全削除",
-                    f"ごみ箱内の {len(items)} 件を完全削除します。元に戻せません。",
+                    self, tr("dialog.permanent_delete_title"),
+                    tr("dialog.permanent_delete_body", n=len(items)),
                 )
                 != QMessageBox.StandardButton.Yes
             ):
@@ -655,8 +738,8 @@ class MainWindow(QMainWindow):
             # Soft delete -> trash (no confirmation; trash is recoverable)
             if ws is None:
                 QMessageBox.warning(
-                    self, "削除不可",
-                    "ワークスペースが未設定のためごみ箱が使えません。",
+                    self, tr("dialog.cannot_delete"),
+                    tr("dialog.no_workspace_no_trash"),
                 )
                 return
             assert self._active_root is not None
@@ -688,32 +771,32 @@ class MainWindow(QMainWindow):
         if isinstance(item, FileItem) and item.kind is FileKind.DISK and self._active_root:
             if in_trash:
                 # Trash view: restore, hard-delete, open
-                menu.addAction(QAction("削除元へ復元", self,
+                menu.addAction(QAction(tr("menu.restore_to_origin"), self,
                                         triggered=self._on_restore_selected))
-                menu.addAction(QAction("関連付けで開く", self,
+                menu.addAction(QAction(tr("menu.open_with_default"), self,
                                         triggered=lambda: self._on_item_double_clicked(item)))
-                menu.addAction(QAction("エクスプローラで開く", self,
+                menu.addAction(QAction(tr("menu.reveal_in_explorer"), self,
                                         triggered=lambda: self._reveal_in_explorer(item)))
-                menu.addAction(QAction("完全に削除", self,
+                menu.addAction(QAction(tr("menu.permanent_delete"), self,
                                         triggered=self._on_delete_shortcut))
             else:
-                menu.addAction(QAction("関連付けで開く", self,
+                menu.addAction(QAction(tr("menu.open_with_default"), self,
                                         triggered=lambda: self._on_item_double_clicked(item)))
-                menu.addAction(QAction("エクスプローラで開く", self,
+                menu.addAction(QAction(tr("menu.reveal_in_explorer"), self,
                                         triggered=lambda: self._reveal_in_explorer(item)))
                 menu.addSeparator()
-                menu.addAction(QAction("画像をコピー", self,
+                menu.addAction(QAction(tr("menu.copy_image"), self,
                                         triggered=self._on_copy_image_to_clipboard))
-                menu.addAction(QAction("Ctrl+C ファイルをコピー", self,
+                menu.addAction(QAction(tr("menu.copy_files"), self,
                                         triggered=self._on_copy_files_to_clipboard))
                 menu.addSeparator()
-                menu.addAction(QAction("F2 名前を変更", self,
+                menu.addAction(QAction(tr("menu.rename_file"), self,
                                         triggered=self._on_rename_shortcut))
-                menu.addAction(QAction("削除（ごみ箱へ）", self,
+                menu.addAction(QAction(tr("menu.delete_to_trash"), self,
                                         triggered=self._on_delete_shortcut))
 
-                move_menu = menu.addMenu("別フォルダへ移動 →")
-                copy_menu = menu.addMenu("別フォルダへコピー →")
+                move_menu = menu.addMenu(tr("menu.move_to_folder"))
+                copy_menu = menu.addMenu(tr("menu.copy_to_folder"))
                 any_other = False
                 for f in self._folder_manager.all_folders():
                     if f.resolve() == self._active_root.resolve():
@@ -734,7 +817,7 @@ class MainWindow(QMainWindow):
                     move_menu.setEnabled(False)
                     copy_menu.setEnabled(False)
         else:
-            menu.addAction(QAction("サブフォルダを作成", self,
+            menu.addAction(QAction(tr("menu.create_subfolder"), self,
                                     triggered=self._on_add_subfolder_clicked))
         menu.exec(self._view.viewport().mapToGlobal(pos))
 
@@ -749,7 +832,10 @@ class MainWindow(QMainWindow):
         path = from_rel(self._active_root, item.rel_path)
         qimg = QImage(str(path))
         if qimg.isNull():
-            QMessageBox.warning(self, "コピー失敗", f"画像を読み込めませんでした: {item.name}")
+            QMessageBox.warning(
+                self, tr("dialog.copy_failed"),
+                tr("dialog.image_load_failed", name=item.name),
+            )
             return
         self._clipboard.note_self_copy(qimg)
         copy_image_to_clipboard(qimg)
@@ -798,7 +884,7 @@ class MainWindow(QMainWindow):
         errs = [r for r in results if r.error]
         if errs:
             QMessageBox.warning(
-                self, "一部復元失敗",
+                self, tr("dialog.partial_restore_failed"),
                 "\n".join(f"{r.restored_abs.name}: {r.error}" for r in errs[:10]),
             )
         self._sidebar.update_trash_count(trash_svc.trash_count(ws))
@@ -842,13 +928,18 @@ class MainWindow(QMainWindow):
 
     def _update_status(self) -> None:
         if self._active_root is None:
-            self._status_label.setText("（ワークスペース未設定）")
+            self._status_label.setText(tr("status.no_workspace"))
             return
         db = self._db(self._active_root)
         n = db.count_files()
         policy = self._cache.policy.value
         self._status_label.setText(
-            f"{self._display_name_for(self._active_root)}: {n} 件  /  サムネ: {policy}"
+            tr(
+                "status.folder_summary",
+                name=self._display_name_for(self._active_root),
+                n=n,
+                policy=policy,
+            )
         )
 
     def closeEvent(self, e) -> None:

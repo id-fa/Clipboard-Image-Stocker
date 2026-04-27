@@ -71,6 +71,67 @@ def test_all_folders_excludes_hidden(tmp_path: Path, monkeypatch):
     assert ".trash" not in names
 
 
+def test_rename_folder_basic(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("APPDATA", str(tmp_path / "appdata"))
+    cfg = AppConfig()
+    fm = FolderManager(cfg)
+    ws = tmp_path / "ws"; ws.mkdir()
+    fm.set_workspace(ws)
+    sub = fm.create_subfolder("旧名")
+    (sub / "x.png").write_bytes(b"x")
+    new_path = fm.rename_folder(sub, "新名")
+    assert new_path == (ws / "新名").resolve()
+    assert new_path.is_dir()
+    assert (new_path / "x.png").exists()
+    assert (new_path / ".stocker").is_dir()
+    assert not sub.exists()
+
+
+def test_rename_folder_rejects_workspace(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("APPDATA", str(tmp_path / "appdata"))
+    cfg = AppConfig()
+    fm = FolderManager(cfg)
+    ws = tmp_path / "ws"; ws.mkdir()
+    fm.set_workspace(ws)
+    with pytest.raises(ValueError):
+        fm.rename_folder(ws, "別名")
+
+
+def test_rename_folder_rejects_invalid_name(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("APPDATA", str(tmp_path / "appdata"))
+    cfg = AppConfig()
+    fm = FolderManager(cfg)
+    ws = tmp_path / "ws"; ws.mkdir()
+    fm.set_workspace(ws)
+    sub = fm.create_subfolder("A")
+    for bad in ("", ".", "..", "a/b", "a\\b", ".stocker", ".trash"):
+        with pytest.raises(ValueError):
+            fm.rename_folder(sub, bad)
+
+
+def test_rename_folder_rejects_collision(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("APPDATA", str(tmp_path / "appdata"))
+    cfg = AppConfig()
+    fm = FolderManager(cfg)
+    ws = tmp_path / "ws"; ws.mkdir()
+    fm.set_workspace(ws)
+    a = fm.create_subfolder("A")
+    fm.create_subfolder("B")
+    with pytest.raises(ValueError):
+        fm.rename_folder(a, "B")
+
+
+def test_rename_folder_rejects_outside_workspace(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("APPDATA", str(tmp_path / "appdata"))
+    cfg = AppConfig()
+    fm = FolderManager(cfg)
+    ws = tmp_path / "ws"; ws.mkdir()
+    fm.set_workspace(ws)
+    outside = tmp_path / "外"; outside.mkdir()
+    with pytest.raises(ValueError):
+        fm.rename_folder(outside, "別名")
+
+
 def test_folder_under_workspace(tmp_path: Path, monkeypatch):
     monkeypatch.setenv("APPDATA", str(tmp_path / "appdata"))
     cfg = AppConfig()

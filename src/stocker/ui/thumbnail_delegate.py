@@ -6,6 +6,7 @@ from PySide6.QtCore import QRect, QSize, Qt
 from PySide6.QtGui import QColor, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import QLineEdit, QStyle, QStyledItemDelegate, QStyleOptionViewItem
 
+from stocker.i18n import tr
 from stocker.ui.thumbnail_model import PENDING_ROLE
 
 
@@ -46,7 +47,7 @@ class ThumbnailDelegate(QStyledItemDelegate):
             badge_rect = QRect(thumb_rect.right() - 70, thumb_rect.top() + 4, 66, 18)
             painter.fillRect(badge_rect, QColor(220, 140, 0, 220))
             painter.setPen(QPen(Qt.GlobalColor.white))
-            painter.drawText(badge_rect, Qt.AlignmentFlag.AlignCenter, "保存中...")
+            painter.drawText(badge_rect, Qt.AlignmentFlag.AlignCenter, tr("delegate.saving"))
 
         # Selection border
         if option.state & QStyle.StateFlag.State_Selected:

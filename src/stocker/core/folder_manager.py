@@ -13,6 +13,7 @@ from pathlib import Path
 
 from stocker.app_paths import HIDDEN_DIR_NAMES, ensure_stocker_layout
 from stocker.config import AppConfig, save_config
+from stocker.i18n import tr
 
 log = logging.getLogger(__name__)
 
@@ -38,7 +39,7 @@ class FolderManager:
     def set_workspace(self, path: Path) -> None:
         path = path.resolve()
         if not path.is_dir():
-            raise ValueError(f"フォルダではありません: {path}")
+            raise ValueError(tr("fm.not_a_folder", path=path))
         self._workspace = path
         ensure_stocker_layout(path)
         self._cfg.workspace_root = str(path)
@@ -65,20 +66,20 @@ class FolderManager:
     def create_subfolder(self, name: str, parent: Path | None = None) -> Path:
         """Create a new subfolder under `parent` (or workspace root if omitted)."""
         if self._workspace is None:
-            raise ValueError("ワークスペースが未設定です")
+            raise ValueError(tr("fm.no_workspace"))
         if not name or name in (".", "..") or "/" in name or "\\" in name:
-            raise ValueError(f"無効なフォルダ名です: {name}")
+            raise ValueError(tr("fm.invalid_name", name=name))
         if name in HIDDEN_DIR_NAMES:
-            raise ValueError(f"予約済みのフォルダ名です: {name}")
+            raise ValueError(tr("fm.reserved_name", name=name))
         base = (parent or self._workspace).resolve()
         # Safety: parent must be within workspace
         try:
             base.relative_to(self._workspace)
         except ValueError as exc:
-            raise ValueError("ワークスペース外には作成できません") from exc
+            raise ValueError(tr("fm.outside_workspace_create")) from exc
         target = base / name
         if target.exists():
-            raise ValueError(f"既に存在します: {target.name}")
+            raise ValueError(tr("fm.already_exists", name=target.name))
         target.mkdir(parents=True)
         ensure_stocker_layout(target)
         log.info("created subfolder %s", target)
@@ -92,3 +93,33 @@ class FolderManager:
             return True
         except ValueError:
             return False
+
+    def rename_folder(self, path: Path, new_name: str) -> Path:
+        """Rename a managed subfolder on disk. Returns the new absolute path.
+
+        The workspace root itself cannot be renamed through this API; its path
+        is owned by `AppConfig.workspace_root` and a rename here would leave
+        the config dangling.
+        """
+        if self._workspace is None:
+            raise ValueError(tr("fm.no_workspace"))
+        if not new_name or new_name in (".", "..") or "/" in new_name or "\\" in new_name:
+            raise ValueError(tr("fm.invalid_name", name=new_name))
+        if new_name in HIDDEN_DIR_NAMES:
+            raise ValueError(tr("fm.reserved_name", name=new_name))
+        src = path.resolve()
+        ws = self._workspace.resolve()
+        if src == ws:
+            raise ValueError(tr("fm.cant_rename_workspace"))
+        if not self.folder_under_workspace(src):
+            raise ValueError(tr("fm.cant_rename_outside"))
+        if not src.is_dir():
+            raise ValueError(tr("fm.not_found", path=src))
+        if new_name == src.name:
+            return src
+        target = src.parent / new_name
+        if target.exists():
+            raise ValueError(tr("fm.already_exists", name=target.name))
+        src.rename(target)
+        log.info("renamed folder %s -> %s", src, target)
+        return target.resolve()
