@@ -78,10 +78,15 @@ pwsh ./build/make_portable.ps1
 - `Sidebar.dragMoveEvent` がカーソル下のフォルダノードを `DROP_HIGHLIGHT_BRUSH` (オレンジ半透明) で塗る (落下先を視認しやすく)
 - `Sidebar.dropEvent` で `keyboardModifiers() & ControlModifier` を判定し signal 引数 `mode_str = "copy" | "move"` に乗せる。`MoveService.perform_move(mode=…)` で挙動を切替
 
-### ホバー拡大プレビューの落とし穴
-`HoverPreviewWindow` には **必ず `WA_TransparentForMouseEvents` + `WindowTransparentForInput`** を付ける。さもないと表示直後にプレビューがマウス下に来て `ThumbnailView.leaveEvent → cancel()` が発火し一瞬で消える。`HOVER_DELAY_MS = 1200` (`src/stocker/ui/hover_preview.py:18`)。
+### ホバー拡大プレビュー
+**トリガーはサムネイル右下コーナーのみ**。`ThumbnailView.mouseMoveEvent` が `visualRect(idx)` の右下 40%×40% (`HOVER_CORNER_FRAC = 0.4`、最小 16px) に入った時だけ `hover_changed(item)` を発火する。`entered` シグナルは未接続 (アイテム全体で発火するため使えない)。コーナー外/インデックス無効/`leaveEvent` ではいずれも `hover_changed(None)` を出す。`HOVER_DELAY_MS = 1200` (`src/stocker/ui/hover_preview.py:17`)。
 
-ツールバーの「ホバー拡大」チェックボックスから `set_enabled(bool)` で全停止可能。OFF 中は `schedule()` が即 return + 表示中のプレビューも `cancel()`。設定は `AppConfig.hover_preview_enabled` (デフォルト ON)。
+**閉じるのはクリックのみ** (`HoverPreviewWindow.mousePressEvent → dismiss()`)。マウスをコーナー外に出してもプレビューは残る。これを成立させるため:
+- ウィンドウフラグから `WindowTransparentForInput` を、属性から `WA_TransparentForMouseEvents` を **外している**。`QLabel` は子→親へのクリック透過のため `WA_TransparentForMouseEvents` のまま。
+- `cancel()` の意味は「保留中のタイマー停止のみ／表示中は隠さない」。表示直後に view の `leaveEvent → hover_changed(None) → cancel()` が走っても消えないのはこのため。`_pending_path` も表示中はクリアしない (再ホバー時の dedup 維持)。
+- 完全に閉じる時は `dismiss()` (= タイマー停止 + `_pending_path` クリア + `hide()`)。`set_enabled(False)` と `mousePressEvent` から呼ぶ。
+
+ツールバーの「ホバー拡大」チェックボックスから `set_enabled(bool)` で全停止可能。OFF 中は `schedule()` が即 return + 表示中のプレビューも `dismiss()`。設定は `AppConfig.hover_preview_enabled` (デフォルト ON)。
 
 ### ごみ箱と復元
 - `<workspace>/.trash/` に `<stem>_<ts_ms>.<ext>` で時刻スタンプ付き保存。ボリューム跨ぎは `os.replace` → `shutil.move` フォールバック。

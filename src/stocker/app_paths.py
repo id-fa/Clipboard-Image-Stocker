@@ -7,7 +7,7 @@ import sys
 from pathlib import Path
 
 APP_NAME = "Stocker"
-APP_VERSION = "1.0"
+APP_VERSION = "1.01"
 APP_AUTHOR = "id-fa"
 APP_HOMEPAGE = "https://github.com/id-fa/Clipboard-Image-Stocker"
 STOCKER_DIRNAME = ".stocker"

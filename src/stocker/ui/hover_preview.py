@@ -21,18 +21,19 @@ MARGIN = 80
 class HoverPreviewWindow(QWidget):
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent, Qt.WindowType.Tool | Qt.WindowType.FramelessWindowHint
-                         | Qt.WindowType.WindowStaysOnTopHint
-                         | Qt.WindowType.WindowTransparentForInput)
+                         | Qt.WindowType.WindowStaysOnTopHint)
         self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, False)
-        # CRITICAL: without this, the preview window appears under the mouse and
-        # the underlying ThumbnailView fires leaveEvent → cancel() → preview hides.
-        # Mouse-transparent means the cursor "passes through" to the view below.
-        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        # The preview is click-to-dismiss, so it must NOT be mouse-transparent.
+        # When the preview pops up under the cursor, ThumbnailView fires leaveEvent
+        # → hover_changed(None) → cancel(). We keep cancel() limited to "stop the
+        # pending timer" so a visible preview survives the leaveEvent and stays
+        # until the user clicks it (handled in mousePressEvent below).
         self._label = QLabel(self)
         self._label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._label.setStyleSheet("background: #1e1e1e;")
         self._label.setScaledContents(False)
+        # Label is transparent so clicks reach the window's mousePressEvent.
         self._label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
         self._timer = QTimer(self)
         self._timer.setSingleShot(True)
@@ -47,7 +48,7 @@ class HoverPreviewWindow(QWidget):
     def set_enabled(self, enabled: bool) -> None:
         self._enabled = bool(enabled)
         if not self._enabled:
-            self.cancel()
+            self.dismiss()
 
     def is_enabled(self) -> bool:
         return self._enabled
@@ -58,16 +59,27 @@ class HoverPreviewWindow(QWidget):
         if path is None or not path.exists():
             self.cancel()
             return
-        if self._pending_path == path and self.isVisible():
+        if self._pending_path == path:
             return
         self._pending_path = path
         self._timer.start(HOVER_DELAY_MS)
 
     def cancel(self) -> None:
+        # Stop a pending timer only. A visible preview is kept until clicked
+        # so that moving the cursor off the trigger corner does not dismiss it.
+        self._timer.stop()
+        if not self.isVisible():
+            self._pending_path = None
+
+    def dismiss(self) -> None:
         self._timer.stop()
         self._pending_path = None
         if self.isVisible():
             self.hide()
+
+    def mousePressEvent(self, e) -> None:
+        self.dismiss()
+        e.accept()
 
     def _show_now(self) -> None:
         if self._pending_path is None:

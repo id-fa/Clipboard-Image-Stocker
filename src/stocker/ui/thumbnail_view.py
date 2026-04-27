@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Callable
 
-from PySide6.QtCore import QPoint, Qt, Signal
+from PySide6.QtCore import QPoint, QRect, Qt, Signal
 from PySide6.QtGui import QDrag, QPixmap
 from PySide6.QtWidgets import QAbstractItemView, QListView
 
@@ -16,6 +16,9 @@ log = logging.getLogger(__name__)
 
 MIN_COLUMNS = 1
 MAX_COLUMNS = 16
+# Hover preview only triggers when the cursor enters this fraction of the item
+# rect, anchored at the bottom-right. 0.4 means a ~16%-area corner trigger.
+HOVER_CORNER_FRAC = 0.4
 
 
 class ThumbnailView(QListView):
@@ -52,7 +55,6 @@ class ThumbnailView(QListView):
         self._hover_emitter: Callable[[], None] | None = None
 
         self.doubleClicked.connect(self._on_double_clicked)
-        self.entered.connect(self._on_entered)
 
     # ---- column / size ----
 
@@ -80,13 +82,28 @@ class ThumbnailView(QListView):
         # Trigger layout refresh
         self.scheduleDelayedItemsLayout()
 
-    # ---- hover -> debounce so we only emit when row stabilizes ----
+    # ---- hover -> only fire when cursor is in the bottom-right corner ----
 
-    def _on_entered(self, idx) -> None:
-        row = idx.row()
-        if row == self._hover_idx_row:
+    def _corner_rect(self, idx) -> QRect:
+        rect = self.visualRect(idx)
+        if not rect.isValid() or rect.width() <= 0 or rect.height() <= 0:
+            return QRect()
+        cw = max(16, int(rect.width() * HOVER_CORNER_FRAC))
+        ch = max(16, int(rect.height() * HOVER_CORNER_FRAC))
+        return QRect(rect.right() - cw + 1, rect.bottom() - ch + 1, cw, ch)
+
+    def mouseMoveEvent(self, e) -> None:
+        super().mouseMoveEvent(e)
+        pos = e.pos()
+        idx = self.indexAt(pos)
+        if not idx.isValid() or not self._corner_rect(idx).contains(pos):
+            if self._hover_idx_row != -1:
+                self._hover_idx_row = -1
+                self.hover_changed.emit(None)
             return
-        self._hover_idx_row = row
+        if idx.row() == self._hover_idx_row:
+            return
+        self._hover_idx_row = idx.row()
         item = idx.data(ITEM_ROLE)
         self.hover_changed.emit(item)
 
