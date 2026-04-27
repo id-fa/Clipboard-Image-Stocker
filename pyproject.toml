@@ -1,0 +1,47 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "stocker"
+version = "0.1.0"
+description = "Lightweight Eagle-like image stocker for Windows"
+requires-python = ">=3.12"
+readme = "README.md"
+dependencies = [
+    "PySide6>=6.7",
+    "Pillow>=10.3",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-qt>=4.4",
+    "pyinstaller>=6.6",
+    "ruff>=0.4",
+    "black>=24.4",
+]
+
+[project.scripts]
+stocker = "stocker.__main__:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "N", "UP", "B", "SIM", "RUF"]
+ignore = ["E501"]
+
+[tool.black]
+line-length = 100
+target-version = ["py312"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+qt_api = "pyside6"
+addopts = "-ra -q"
+pythonpath = ["src"]

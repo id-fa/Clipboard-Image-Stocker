@@ -1,0 +1,55 @@
+"""User configuration persisted as JSON in user_data_dir/config.json."""
+
+from __future__ import annotations
+
+import json
+from dataclasses import asdict, dataclass
+from pathlib import Path
+
+from stocker.app_paths import config_path, ensure_user_data_dir
+
+
+@dataclass
+class AppConfig:
+    # Workspace model: a single base folder; managed folders are subdirectories.
+    workspace_root: str | None = None
+    last_active_root: str | None = None  # active subfolder (or workspace itself)
+    columns: int = 6
+    sort_key: str = "name"  # "name" or "mtime" or "added"
+    sort_dir: str = "asc"  # "asc" or "desc"
+    sidebar_font_size: int = 12  # points
+    paste_format: str = "png"  # "png" or "jpeg"
+    paste_jpeg_quality: int = 92
+    trash_auto_delete_days: int = 0  # 0 = never auto-delete
+    window_geometry_b64: str | None = None
+    window_state_b64: str | None = None
+    splitter_state_b64: str | None = None
+
+    def to_json(self) -> str:
+        return json.dumps(asdict(self), ensure_ascii=False, indent=2)
+
+    @classmethod
+    def from_json(cls, text: str) -> AppConfig:
+        data = json.loads(text)
+        known = {f for f in cls.__dataclass_fields__}
+        filtered = {k: v for k, v in data.items() if k in known}
+        return cls(**filtered)
+
+
+def load_config() -> AppConfig:
+    ensure_user_data_dir()
+    path: Path = config_path()
+    if not path.exists():
+        return AppConfig()
+    try:
+        return AppConfig.from_json(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, TypeError, ValueError):
+        return AppConfig()
+
+
+def save_config(cfg: AppConfig) -> None:
+    ensure_user_data_dir()
+    path: Path = config_path()
+    tmp = path.with_suffix(".json.tmp")
+    tmp.write_text(cfg.to_json(), encoding="utf-8")
+    tmp.replace(path)

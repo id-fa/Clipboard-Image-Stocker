@@ -1,2 +1,49 @@
 # Clipboard-Image-Stocker
-An image storage tool that supports fast pasting via the clipboard
+
+軽量・高速な Eagle ライク画像管理ツール (Windows 11 / Python 3.12 + PySide6)。
+
+## 主な機能
+
+- **ワークスペースモデル**: 1 つの基点フォルダを選び、その配下のサブフォルダを管理対象とする（Eagle ライブラリ式）
+- フォルダ内画像のサムネイルグリッド表示（仮想化リスト）
+- 列数スライダー（**1〜16**）→ サムネイルサイズ自動調整
+- Explorer 等からの D&D で取り込み
+- **Ctrl+V で高速連続貼り付け**（メモリキューイング・取りこぼしゼロ）
+- 貼り付け保存形式の選択 (PNG / JPEG)
+- アプリ外への D&D（Explorer 等）
+- ファイル名 SQLite DB による起動高速化
+- ファイル名 / 更新日時 / 追加日時ソート
+- F2 リネーム
+- ホバー (0.5 秒) で画面サイズフィットの拡大プレビュー
+- ダブルクリックで関連付けビューア起動
+- **サイドバーにワークスペース＋サブフォルダのツリー** + ごみ箱ノード
+- ツリーフォントサイズ調整 (7〜28 pt)
+- **管理フォルダ間で複数ファイル一括移動** (D&D + 右クリックメニュー)
+- **D&D 中はターゲットフォルダがハイライト**されるので落下先が一目瞭然
+- **ごみ箱フォルダ** (`<workspace>/.trash/`) と N 日経過後の自動削除（0 で無効）
+- **ごみ箱からの復元** (削除元フォルダ情報を `.stocker/trash_index.json` に保持)
+- 右クリック「画像をコピー」(QImage) / 「ファイルをコピー」(Explorer 互換)
+- Ctrl+V でクリップボード上のファイルも取り込み可能
+- **Ctrl + ドラッグ&ドロップ**でフォルダ間コピー（デフォルトは移動）
+
+## 開発セットアップ
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+pip install -r requirements-dev.txt
+python -m stocker
+```
+
+## テスト
+
+```powershell
+pytest
+```
+
+## ポータブル zip ビルド
+
+```powershell
+pyinstaller --clean build/stocker.spec
+.\build\make_portable.ps1
+```
