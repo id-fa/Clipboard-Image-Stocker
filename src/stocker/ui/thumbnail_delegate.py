@@ -7,6 +7,7 @@ from PySide6.QtGui import QColor, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import QLineEdit, QStyle, QStyledItemDelegate, QStyleOptionViewItem
 
 from stocker.i18n import tr
+from stocker.ui.theme import thumb_placeholder_color
 from stocker.ui.thumbnail_model import PENDING_ROLE
 
 
@@ -40,7 +41,7 @@ class ThumbnailDelegate(QStyledItemDelegate):
             painter.drawPixmap(x, y, scaled)
         else:
             # Placeholder
-            painter.fillRect(thumb_rect, QColor(40, 40, 40))
+            painter.fillRect(thumb_rect, thumb_placeholder_color())
 
         # PENDING badge
         if bool(index.data(PENDING_ROLE)):

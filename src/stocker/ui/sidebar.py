@@ -10,19 +10,18 @@ import logging
 from pathlib import Path
 
 from PySide6.QtCore import QModelIndex, Qt, Signal
-from PySide6.QtGui import QBrush, QColor, QFont, QStandardItem, QStandardItemModel
+from PySide6.QtGui import QBrush, QFont, QStandardItem, QStandardItemModel
 from PySide6.QtWidgets import QTreeView
 
 from stocker.app_paths import TRASH_DIRNAME
 from stocker.i18n import tr
+from stocker.ui.theme import drop_highlight_color
 
 log = logging.getLogger(__name__)
 
 PATH_ROLE = int(Qt.ItemDataRole.UserRole) + 1
 KIND_ROLE = int(Qt.ItemDataRole.UserRole) + 2  # "workspace" | "folder" | "trash"
 ORIGINAL_BG_ROLE = int(Qt.ItemDataRole.UserRole) + 3
-
-DROP_HIGHLIGHT_BRUSH = QBrush(QColor(255, 165, 0, 180))
 
 
 class Sidebar(QTreeView):
@@ -236,5 +235,5 @@ class Sidebar(QTreeView):
             new_item = self._model.itemFromIndex(idx)
             if new_item is not None:
                 new_item.setData(new_item.background(), ORIGINAL_BG_ROLE)
-                new_item.setBackground(DROP_HIGHLIGHT_BRUSH)
+                new_item.setBackground(QBrush(drop_highlight_color()))
         self._highlighted_idx = idx

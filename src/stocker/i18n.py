@@ -108,6 +108,11 @@ _CATALOG: dict[str, dict[str, str]] = {
         "ja": "このシステムではタスクトレイが利用できません。",
         "en": "The system tray is not available on this system.",
     },
+    "toolbar.dark_theme": {"ja": "ダークテーマ", "en": "Dark theme"},
+    "toolbar.dark_theme_tooltip": {
+        "ja": "UI 全体をダークパレットに切り替えます。",
+        "en": "Switch the entire UI to a dark palette.",
+    },
     "tray.show": {"ja": "表示", "en": "Show"},
     "tray.quit": {"ja": "終了", "en": "Quit"},
     "toolbar.tree_font_label": {"ja": " ツリー字: ", "en": " Tree font: "},

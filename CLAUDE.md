@@ -152,6 +152,18 @@ pwsh ./build/make_portable.ps1
 
 `setQuitOnLastWindowClosed(True)` (Qt デフォルト) を利用。トレイに隠れている間は「最後のウィンドウが閉じた」状態にならないのでアプリ継続、× で実際に閉じれば last window で quit。
 
+### テーマ (ライト/ダーク)
+追加依存なしで Qt 標準の Fusion + `QPalette` 切替のみで実現 (qdarkstyle 等は配布サイズが膨らむので不採用)。`src/stocker/ui/theme.py` の `apply_theme(app, name)` が `app.setStyle("Fusion")` + ライト用デフォルトパレット / 自前ダークパレットのどちらかを当てる。`main.py` で `cfg = load_config()` 直後に `apply_theme(app, cfg.theme)` を呼んで起動時から反映。
+
+ツールバーのチェックボックス「ダークテーマ」(EN: "Dark theme") から `dark_theme_changed` シグナル → `MainWindow._on_dark_theme_changed()` で実行時に `apply_theme()` を再適用 + `cfg.theme` 永続化。`QApplication` の `paletteChanged` を受けてほとんどのウィジェットは自動再描画されるが、明示色を持つ View (Sidebar / ThumbnailDelegate) は念のため `viewport().update()` で強制再描画する。
+
+明示色 (パレットでは賄えない箇所) は theme.py のヘルパー経由で取得し、テーマ依存に切替:
+- `drop_highlight_color()` → サイドバーの D&D ハイライト (旧 `DROP_HIGHLIGHT_BRUSH` 定数を置換)。ライトはオレンジ `(255,165,0,180)`、ダークは少し明るい `(255,170,60,200)`
+- `thumb_placeholder_color()` → サムネイル未ロード時のプレースホルダ (ライト `(40,40,40)` / ダーク `(60,60,60)`)
+- HoverPreview の `QLabel` 背景色 `#1e1e1e` はもともとダーク基調なので両テーマ共通
+
+PENDING バッジのオレンジ `(220,140,0,220)` と HoverPreview 背景は両テーマで違和感がないので据え置き。設定 `AppConfig.theme: str` (デフォルト `"light"`) で永続化。
+
 ### About ダイアログ
 ツールバー右端「バージョン情報...」(EN: "About...") から `QMessageBox.about()`。表示内容は `app_paths.py` の `APP_VERSION`, `APP_AUTHOR`, `APP_HOMEPAGE` を `tr("about.body", ...)` の HTML テンプレートに差し込む。URL は `<a href>` でクリック → ブラウザ起動。`pyproject.toml` の `version` と `APP_VERSION` は揃える運用 (`make_portable.ps1` が pyproject から zip ファイル名を作るため)。
 
@@ -175,8 +187,9 @@ pwsh ./build/make_portable.ps1
 | `src/stocker/core/trash.py` | ごみ箱 + 復元 + auto_purge + `rewrite_origin_paths` (フォルダリネーム追従) |
 | `src/stocker/utils/clipboard_files.py` | Explorer 互換のファイル/画像コピー (Preferred DropEffect) |
 | `src/stocker/ui/main_window.py` | UI 統括ハブ (~960 行) |
-| `src/stocker/ui/toolbar.py` | ツールバー (列数/ソート/貼り付け形式/自動取込/ホバー/アニメ再生/トレイ格納/ツリー字/ごみ箱/About) |
+| `src/stocker/ui/toolbar.py` | ツールバー (列数/ソート/貼り付け形式/自動取込/ホバー/アニメ再生/トレイ格納/ダークテーマ/ツリー字/ごみ箱/About) |
 | `src/stocker/ui/sidebar.py` | ツリーサイドバー + D&D ハイライト + フォルダリネーム/削除 |
+| `src/stocker/ui/theme.py` | Fusion + `QPalette` ベースのライト/ダーク切替、明示色のヘルパー (`drop_highlight_color`, `thumb_placeholder_color`) |
 | `src/stocker/ui/thumbnail_view.py` | 仮想化 IconMode QListView |
 | `src/stocker/ui/thumbnail_model.py` | QAbstractListModel + dedupe + mime |
 | `src/stocker/ui/hover_preview.py` | フローティングプレビュー (静止画 + アニメ GIF/WebP via QMovie) |
@@ -254,6 +267,7 @@ Twitter のペーストハンドラは `e.clipboardData.files` のみを見る�
 - `hover_preview_enabled` (bool, default True) — ホバー拡大プレビューの ON/OFF
 - `hover_preview_animate` (bool, default True) — 拡大プレビューでアニメ GIF/WebP を再生するか
 - `minimize_to_tray` (bool, default False) — 最小化時にウィンドウをタスクトレイに格納する (× ボタンは通常終了)
+- `theme` ("light"|"dark", default "light") — Fusion + `QPalette` でライト/ダーク切替
 - `trash_auto_delete_days` (0=無効)
 - 起動時に `auto_purge(workspace, trash_auto_delete_days)` を実行
 

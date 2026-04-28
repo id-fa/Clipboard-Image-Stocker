@@ -2,6 +2,8 @@
 
 軽量・高速な画像ストックツール (Windows 11 / Python 3.12 + PySide6)
 
+![Screenshot](assets/screenshot.png)
+
 ## 主な機能
 
 - ワークスペースモデル: 1 つの基点フォルダを選び、配下のサブフォルダに画像を保存

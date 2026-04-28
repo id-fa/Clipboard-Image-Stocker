@@ -27,6 +27,7 @@ from stocker.config import load_config
 from stocker.i18n import detect_language, set_language
 from stocker.logging_setup import setup_logging
 from stocker.ui.main_window import MainWindow
+from stocker.ui.theme import apply_theme
 
 _ICON_PATH = Path(__file__).resolve().parent / "assets" / "icons" / "app.png"
 
@@ -45,6 +46,7 @@ def main() -> int:
     set_language(detect_language())
 
     cfg = load_config()
+    apply_theme(app, cfg.theme)
     win = MainWindow(cfg)
     win.show()
 

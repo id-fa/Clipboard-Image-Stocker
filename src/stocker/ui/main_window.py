@@ -48,6 +48,7 @@ from stocker.db.metadata_db import MetadataDB
 from stocker.ui.hover_preview import HoverPreviewWindow
 from stocker.ui.sidebar import Sidebar
 from stocker.ui.thumbnail_delegate import ThumbnailDelegate
+from stocker.ui.theme import apply_theme
 from stocker.ui.thumbnail_model import ITEM_ROLE, ThumbnailModel
 from stocker.ui.thumbnail_view import ThumbnailView
 from stocker.ui.toolbar import StockerToolbar
@@ -93,6 +94,7 @@ class MainWindow(QMainWindow):
         tray_available = QSystemTrayIcon.isSystemTrayAvailable()
         self._toolbar.set_minimize_to_tray(cfg.minimize_to_tray and tray_available)
         self._toolbar.set_minimize_to_tray_available(tray_available)
+        self._toolbar.set_dark_theme(cfg.theme == "dark")
         self._toolbar.set_font_size(cfg.sidebar_font_size)
         self._toolbar.set_trash_days(cfg.trash_auto_delete_days)
         self._toolbar.blockSignals(False)
@@ -105,6 +107,7 @@ class MainWindow(QMainWindow):
         self._toolbar.hover_preview_enabled_changed.connect(self._on_hover_preview_enabled_changed)
         self._toolbar.hover_preview_animate_changed.connect(self._on_hover_preview_animate_changed)
         self._toolbar.minimize_to_tray_changed.connect(self._on_minimize_to_tray_changed)
+        self._toolbar.dark_theme_changed.connect(self._on_dark_theme_changed)
         self._toolbar.sidebar_font_size_changed.connect(self._on_sidebar_font_changed)
         self._toolbar.trash_days_changed.connect(self._on_trash_days_changed)
         self._toolbar.empty_trash_requested.connect(self._on_empty_trash)
@@ -562,6 +565,19 @@ class MainWindow(QMainWindow):
             # isn't stranded with no taskbar entry and no tray icon.
             if not self.isVisible():
                 self._show_from_tray()
+
+    def _on_dark_theme_changed(self, enabled: bool) -> None:
+        new_theme = "dark" if enabled else "light"
+        if self._cfg.theme == new_theme:
+            return
+        self._cfg.theme = new_theme
+        save_config(self._cfg)
+        app = QApplication.instance()
+        if isinstance(app, QApplication):
+            apply_theme(app, new_theme)
+        # Repaint views that use explicit theme-dependent colors.
+        self._view.viewport().update()
+        self._sidebar.viewport().update()
 
     def _on_tray_activated(self, reason: QSystemTrayIcon.ActivationReason) -> None:
         # Single-click on Windows = Trigger; double-click = DoubleClick.
