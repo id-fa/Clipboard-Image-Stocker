@@ -22,6 +22,8 @@ class AppConfig:
     paste_jpeg_quality: int = 92
     clipboard_autocapture: bool = False  # auto-import images appearing on clipboard
     hover_preview_enabled: bool = True  # show fitted preview after hover delay
+    hover_preview_animate: bool = True  # play animated GIF/WebP in the hover preview
+    minimize_to_tray: bool = False  # hide window to system tray on minimize
     trash_auto_delete_days: int = 0  # 0 = never auto-delete
     window_geometry_b64: str | None = None
     window_state_b64: str | None = None

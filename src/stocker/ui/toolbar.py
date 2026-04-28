@@ -24,6 +24,8 @@ class StockerToolbar(QToolBar):
     paste_format_changed = Signal(str)  # "png" | "jpeg"
     clipboard_autocapture_changed = Signal(bool)
     hover_preview_enabled_changed = Signal(bool)
+    hover_preview_animate_changed = Signal(bool)
+    minimize_to_tray_changed = Signal(bool)
     sidebar_font_size_changed = Signal(int)
     trash_days_changed = Signal(int)
     empty_trash_requested = Signal()
@@ -84,6 +86,17 @@ class StockerToolbar(QToolBar):
         self.addWidget(self._hover_preview)
         self._hover_preview.toggled.connect(self.hover_preview_enabled_changed.emit)
 
+        self._hover_animate = QCheckBox(tr("toolbar.hover_animate"), self)
+        self._hover_animate.setToolTip(tr("toolbar.hover_animate_tooltip"))
+        self._hover_animate.setChecked(True)
+        self.addWidget(self._hover_animate)
+        self._hover_animate.toggled.connect(self.hover_preview_animate_changed.emit)
+
+        self._minimize_to_tray = QCheckBox(tr("toolbar.minimize_to_tray"), self)
+        self._minimize_to_tray.setToolTip(tr("toolbar.minimize_to_tray_tooltip"))
+        self.addWidget(self._minimize_to_tray)
+        self._minimize_to_tray.toggled.connect(self.minimize_to_tray_changed.emit)
+
         self.addSeparator()
         self.addWidget(QLabel(tr("toolbar.tree_font_label")))
         self._font_spin = QSpinBox(self)
@@ -129,6 +142,18 @@ class StockerToolbar(QToolBar):
 
     def set_hover_preview_enabled(self, enabled: bool) -> None:
         self._hover_preview.setChecked(bool(enabled))
+
+    def set_hover_preview_animate(self, enabled: bool) -> None:
+        self._hover_animate.setChecked(bool(enabled))
+
+    def set_minimize_to_tray(self, enabled: bool) -> None:
+        self._minimize_to_tray.setChecked(bool(enabled))
+
+    def set_minimize_to_tray_available(self, available: bool) -> None:
+        """Disable the toggle (with explanatory tooltip) when no tray is present."""
+        self._minimize_to_tray.setEnabled(bool(available))
+        if not available:
+            self._minimize_to_tray.setToolTip(tr("toolbar.tray_unavailable_tooltip"))
 
     def set_font_size(self, points: int) -> None:
         self._font_spin.setValue(points)

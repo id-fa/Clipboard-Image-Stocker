@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 import os
+import shutil
 from pathlib import Path
 
 from stocker.app_paths import HIDDEN_DIR_NAMES, ensure_stocker_layout
@@ -123,3 +124,24 @@ class FolderManager:
         src.rename(target)
         log.info("renamed folder %s -> %s", src, target)
         return target.resolve()
+
+    def delete_folder(self, path: Path) -> None:
+        """Remove a managed subfolder (and everything under it) from disk.
+
+        Workspace root is rejected here for the same reason as rename: it is
+        owned by AppConfig.workspace_root. The caller is expected to have
+        already moved the folder's files to trash and closed every DB whose
+        path is within the subtree (Windows holds locks on open SQLite files).
+        """
+        if self._workspace is None:
+            raise ValueError(tr("fm.no_workspace"))
+        src = path.resolve()
+        ws = self._workspace.resolve()
+        if src == ws:
+            raise ValueError(tr("fm.cant_delete_workspace"))
+        if not self.folder_under_workspace(src):
+            raise ValueError(tr("fm.cant_delete_outside"))
+        if not src.is_dir():
+            raise ValueError(tr("fm.not_found", path=src))
+        shutil.rmtree(src)
+        log.info("deleted folder %s", src)

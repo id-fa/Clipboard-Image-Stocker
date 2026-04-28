@@ -30,6 +30,7 @@ class Sidebar(QTreeView):
     trash_selected = Signal()
     create_subfolder_requested = Signal(object)  # parent Path | None
     rename_folder_requested = Signal(object)  # Path of the folder to rename
+    delete_folder_requested = Signal(object)  # Path of the folder to delete
     # mode_str: "move" (default) or "copy" — set when Ctrl is held during the drop.
     drop_stocker_items_to_folder = Signal(object, bytes, str)
     drop_external_files_to_folder = Signal(object, list)
@@ -139,6 +140,11 @@ class Sidebar(QTreeView):
             menu.addAction(
                 tr("sidebar.menu_rename_folder"),
                 lambda: self.rename_folder_requested.emit(Path(path_str)),
+            )
+            menu.addSeparator()
+            menu.addAction(
+                tr("sidebar.menu_delete_folder"),
+                lambda: self.delete_folder_requested.emit(Path(path_str)),
             )
         menu.exec(e.globalPos())
 

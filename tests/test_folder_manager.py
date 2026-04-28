@@ -132,6 +132,59 @@ def test_rename_folder_rejects_outside_workspace(tmp_path: Path, monkeypatch):
         fm.rename_folder(outside, "別名")
 
 
+def test_delete_folder_basic(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("APPDATA", str(tmp_path / "appdata"))
+    cfg = AppConfig()
+    fm = FolderManager(cfg)
+    ws = tmp_path / "ws"; ws.mkdir()
+    fm.set_workspace(ws)
+    sub = fm.create_subfolder("削除対象")
+    nested = fm.create_subfolder("子", parent=sub)
+    (sub / "a.png").write_bytes(b"a")
+    (nested / "b.png").write_bytes(b"b")
+
+    fm.delete_folder(sub)
+    assert not sub.exists()
+    assert not nested.exists()
+    # Workspace itself untouched
+    assert ws.exists()
+    assert (ws / ".stocker").is_dir()
+
+
+def test_delete_folder_rejects_workspace(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("APPDATA", str(tmp_path / "appdata"))
+    cfg = AppConfig()
+    fm = FolderManager(cfg)
+    ws = tmp_path / "ws"; ws.mkdir()
+    fm.set_workspace(ws)
+    with pytest.raises(ValueError):
+        fm.delete_folder(ws)
+    assert ws.exists()
+
+
+def test_delete_folder_rejects_outside_workspace(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("APPDATA", str(tmp_path / "appdata"))
+    cfg = AppConfig()
+    fm = FolderManager(cfg)
+    ws = tmp_path / "ws"; ws.mkdir()
+    fm.set_workspace(ws)
+    outside = tmp_path / "外"; outside.mkdir()
+    with pytest.raises(ValueError):
+        fm.delete_folder(outside)
+    assert outside.exists()
+
+
+def test_delete_folder_missing(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("APPDATA", str(tmp_path / "appdata"))
+    cfg = AppConfig()
+    fm = FolderManager(cfg)
+    ws = tmp_path / "ws"; ws.mkdir()
+    fm.set_workspace(ws)
+    ghost = ws / "存在しない"
+    with pytest.raises(ValueError):
+        fm.delete_folder(ghost)
+
+
 def test_folder_under_workspace(tmp_path: Path, monkeypatch):
     monkeypatch.setenv("APPDATA", str(tmp_path / "appdata"))
     cfg = AppConfig()

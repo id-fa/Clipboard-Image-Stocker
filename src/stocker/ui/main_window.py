@@ -7,9 +7,10 @@ import logging
 import os
 from pathlib import Path
 
-from PySide6.QtCore import QPoint, Qt, QThreadPool, QUrl
+from PySide6.QtCore import QEvent, QPoint, Qt, QThreadPool, QTimer, QUrl
 from PySide6.QtGui import QAction, QDesktopServices, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
+    QApplication,
     QFileDialog,
     QInputDialog,
     QLabel,
@@ -19,9 +20,10 @@ from PySide6.QtWidgets import (
     QProgressDialog,
     QSplitter,
     QStatusBar,
+    QSystemTrayIcon,
 )
 
-from stocker.app_paths import APP_AUTHOR, APP_HOMEPAGE, APP_VERSION
+from stocker.app_paths import APP_AUTHOR, APP_HOMEPAGE, APP_NAME, APP_VERSION, HIDDEN_DIR_NAMES
 from stocker.config import AppConfig, save_config
 from stocker.i18n import tr
 from stocker.core.clipboard_watcher import ClipboardWatcher
@@ -87,6 +89,10 @@ class MainWindow(QMainWindow):
         self._toolbar.set_paste_format(cfg.paste_format)
         self._toolbar.set_autocapture(cfg.clipboard_autocapture)
         self._toolbar.set_hover_preview_enabled(cfg.hover_preview_enabled)
+        self._toolbar.set_hover_preview_animate(cfg.hover_preview_animate)
+        tray_available = QSystemTrayIcon.isSystemTrayAvailable()
+        self._toolbar.set_minimize_to_tray(cfg.minimize_to_tray and tray_available)
+        self._toolbar.set_minimize_to_tray_available(tray_available)
         self._toolbar.set_font_size(cfg.sidebar_font_size)
         self._toolbar.set_trash_days(cfg.trash_auto_delete_days)
         self._toolbar.blockSignals(False)
@@ -97,6 +103,8 @@ class MainWindow(QMainWindow):
         self._toolbar.paste_format_changed.connect(self._on_paste_format_changed)
         self._toolbar.clipboard_autocapture_changed.connect(self._on_autocapture_changed)
         self._toolbar.hover_preview_enabled_changed.connect(self._on_hover_preview_enabled_changed)
+        self._toolbar.hover_preview_animate_changed.connect(self._on_hover_preview_animate_changed)
+        self._toolbar.minimize_to_tray_changed.connect(self._on_minimize_to_tray_changed)
         self._toolbar.sidebar_font_size_changed.connect(self._on_sidebar_font_changed)
         self._toolbar.trash_days_changed.connect(self._on_trash_days_changed)
         self._toolbar.empty_trash_requested.connect(self._on_empty_trash)
@@ -113,6 +121,7 @@ class MainWindow(QMainWindow):
         self._sidebar.trash_selected.connect(self._on_trash_selected)
         self._sidebar.create_subfolder_requested.connect(self._on_create_subfolder_under)
         self._sidebar.rename_folder_requested.connect(self._on_rename_folder_requested)
+        self._sidebar.delete_folder_requested.connect(self._on_delete_folder_requested)
         self._sidebar.drop_stocker_items_to_folder.connect(self._on_drop_to_sidebar)
         self._sidebar.drop_external_files_to_folder.connect(self._on_drop_external_to_sidebar)
         self._splitter.addWidget(self._sidebar)
@@ -137,6 +146,7 @@ class MainWindow(QMainWindow):
         # Hover preview
         self._hover_preview = HoverPreviewWindow(self)
         self._hover_preview.set_enabled(cfg.hover_preview_enabled)
+        self._hover_preview.set_animate(cfg.hover_preview_animate)
 
         # FS watcher
         self._fs_watcher = FolderWatcher(self)
@@ -169,6 +179,24 @@ class MainWindow(QMainWindow):
         self._queue_label = QLabel("", self)
         self.statusBar().addWidget(self._status_label, 1)
         self.statusBar().addPermanentWidget(self._queue_label)
+
+        # System tray (optional). Built only when the platform exposes a tray;
+        # toggled via cfg.minimize_to_tray. Closing via the [X] button still
+        # quits the app — only an explicit minimize routes through the tray.
+        self._tray: QSystemTrayIcon | None = None
+        if tray_available:
+            self._tray = QSystemTrayIcon(QApplication.windowIcon(), self)
+            self._tray.setToolTip(APP_NAME)
+            tray_menu = QMenu(self)
+            act_show = tray_menu.addAction(tr("tray.show"))
+            act_show.triggered.connect(self._show_from_tray)
+            tray_menu.addSeparator()
+            act_quit = tray_menu.addAction(tr("tray.quit"))
+            act_quit.triggered.connect(self.close)
+            self._tray.setContextMenu(tray_menu)
+            self._tray.activated.connect(self._on_tray_activated)
+            if cfg.minimize_to_tray:
+                self._tray.show()
 
         # Initial workspace flow
         if not self._folder_manager.has_workspace():
@@ -326,6 +354,95 @@ class MainWindow(QMainWindow):
         self._refresh_sidebar()
         self._activate_folder(new_active)
 
+    def _on_delete_folder_requested(self, path: Path) -> None:
+        """Delete a managed subfolder; files in the subtree go to trash.
+
+        The workspace root is rejected. Every file under the subtree
+        (excluding internal dirs like .stocker / .trash) is moved to the
+        workspace trash with origin tracked at its immediate parent, then
+        the directory is rmtree-d. DBs whose path lies within the subtree
+        are closed first to release Windows file locks.
+        """
+        if not self._folder_manager.has_workspace():
+            return
+        ws = self._folder_manager.workspace
+        assert ws is not None
+        target = path.resolve()
+        if target == ws.resolve():
+            QMessageBox.information(
+                self, tr("dialog.delete_disallowed"),
+                tr("dialog.workspace_delete_blocked"),
+            )
+            return
+        if not target.is_dir():
+            return
+
+        # Collect every file under the subtree, paired with its immediate
+        # parent (which is the managed folder it belongs to in this app's
+        # model — every dir under workspace owns its own .stocker DB).
+        files_to_trash: list[tuple[Path, Path]] = []
+        for current_root, dirnames, filenames in os.walk(target):
+            dirnames[:] = [d for d in dirnames if d not in HIDDEN_DIR_NAMES]
+            parent = Path(current_root)
+            for fn in filenames:
+                files_to_trash.append((parent / fn, parent))
+
+        n_files = len(files_to_trash)
+        body_key = (
+            "dialog.delete_folder_body" if n_files
+            else "dialog.delete_folder_empty_body"
+        )
+        if (
+            QMessageBox.question(
+                self, tr("dialog.delete_folder_title"),
+                tr(body_key, name=target.name, n=n_files),
+            )
+            != QMessageBox.StandardButton.Yes
+        ):
+            return
+
+        # Close every DB whose root is the target or below — Windows holds
+        # file locks on open SQLite handles and would block rmtree.
+        affected_db_roots = [
+            r for r in list(self._dbs.keys())
+            if r == target or target in r.parents
+        ]
+        for r in affected_db_roots:
+            self._dbs[r].close()
+            del self._dbs[r]
+
+        active_in_subtree = (
+            self._active_root is not None
+            and (
+                self._active_root == target
+                or target in self._active_root.parents
+            )
+        )
+        if active_in_subtree:
+            self._fs_watcher.watch(None)
+            self._paste_queue.set_target_root(None)
+
+        moved = trash_svc.move_to_trash(ws, files_to_trash)
+
+        try:
+            self._folder_manager.delete_folder(target)
+        except (ValueError, OSError) as e:
+            QMessageBox.warning(self, tr("dialog.delete_failed"), str(e))
+            self._refresh_sidebar()
+            if active_in_subtree:
+                self._activate_folder(ws)
+            else:
+                self._sidebar.update_trash_count(trash_svc.trash_count(ws))
+            return
+
+        self._refresh_sidebar()
+        if active_in_subtree:
+            self._activate_folder(ws)
+        else:
+            self._sidebar.update_trash_count(trash_svc.trash_count(ws))
+        self._update_status()
+        log.info("deleted folder %s; trashed %d files", target, len(moved))
+
     def _refresh_sidebar(self) -> None:
         ws = self._folder_manager.workspace
         folders = self._folder_manager.all_folders()
@@ -426,6 +543,41 @@ class MainWindow(QMainWindow):
         self._cfg.hover_preview_enabled = bool(enabled)
         save_config(self._cfg)
         self._hover_preview.set_enabled(bool(enabled))
+
+    def _on_hover_preview_animate_changed(self, enabled: bool) -> None:
+        self._cfg.hover_preview_animate = bool(enabled)
+        save_config(self._cfg)
+        self._hover_preview.set_animate(bool(enabled))
+
+    def _on_minimize_to_tray_changed(self, enabled: bool) -> None:
+        self._cfg.minimize_to_tray = bool(enabled)
+        save_config(self._cfg)
+        if self._tray is None:
+            return
+        if enabled:
+            self._tray.show()
+        else:
+            self._tray.hide()
+            # If the window was hidden via tray, surface it again so the user
+            # isn't stranded with no taskbar entry and no tray icon.
+            if not self.isVisible():
+                self._show_from_tray()
+
+    def _on_tray_activated(self, reason: QSystemTrayIcon.ActivationReason) -> None:
+        # Single-click on Windows = Trigger; double-click = DoubleClick.
+        # Both restore — the context menu handles "Show" / "Quit" separately.
+        if reason in (
+            QSystemTrayIcon.ActivationReason.Trigger,
+            QSystemTrayIcon.ActivationReason.DoubleClick,
+        ):
+            self._show_from_tray()
+
+    def _show_from_tray(self) -> None:
+        # showNormal() also clears the WindowMinimized flag, which is required
+        # since changeEvent() left the state as Minimized when it called hide().
+        self.showNormal()
+        self.activateWindow()
+        self.raise_()
 
     def _on_sidebar_font_changed(self, points: int) -> None:
         self._cfg.sidebar_font_size = points
@@ -951,7 +1103,22 @@ class MainWindow(QMainWindow):
             )
         )
 
+    def changeEvent(self, e) -> None:
+        # Hide-to-tray trigger. We watch WindowStateChange and divert minimize
+        # via QTimer.singleShot(0, self.hide) — calling hide() directly inside
+        # changeEvent confuses Qt's window state bookkeeping on Windows.
+        if (
+            e.type() == QEvent.Type.WindowStateChange
+            and self._tray is not None
+            and self._cfg.minimize_to_tray
+            and self.isMinimized()
+        ):
+            QTimer.singleShot(0, self.hide)
+        super().changeEvent(e)
+
     def closeEvent(self, e) -> None:
+        if self._tray is not None:
+            self._tray.hide()
         self._paste_queue.stop()
         for db in self._dbs.values():
             db.close()

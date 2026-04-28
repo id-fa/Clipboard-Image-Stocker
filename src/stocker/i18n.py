@@ -89,6 +89,27 @@ _CATALOG: dict[str, dict[str, str]] = {
         "ja": "サムネイル上で停止すると拡大プレビューを表示します",
         "en": "Show an enlarged preview when the cursor pauses on a thumbnail",
     },
+    "toolbar.hover_animate": {"ja": "アニメ再生", "en": "Animate"},
+    "toolbar.hover_animate_tooltip": {
+        "ja": "拡大プレビューでアニメ GIF / WebP を再生します",
+        "en": "Play animated GIF / WebP in the hover preview",
+    },
+    "toolbar.minimize_to_tray": {
+        "ja": "最小化でトレイに格納",
+        "en": "Minimize to tray",
+    },
+    "toolbar.minimize_to_tray_tooltip": {
+        "ja": "最小化したときにウィンドウをタスクトレイに収めます。タスクバーからは消えます。"
+              "復元はトレイアイコンのダブルクリックまたは右クリックメニューから。",
+        "en": "When minimized, hide the window to the system tray (the taskbar entry "
+              "disappears). Double-click the tray icon, or use its context menu, to restore.",
+    },
+    "toolbar.tray_unavailable_tooltip": {
+        "ja": "このシステムではタスクトレイが利用できません。",
+        "en": "The system tray is not available on this system.",
+    },
+    "tray.show": {"ja": "表示", "en": "Show"},
+    "tray.quit": {"ja": "終了", "en": "Quit"},
     "toolbar.tree_font_label": {"ja": " ツリー字: ", "en": " Tree font: "},
     "toolbar.trash_keep_label": {"ja": " ごみ箱保持: ", "en": " Trash keep: "},
     "toolbar.days_suffix": {"ja": " 日 (0=無制限)", "en": " days (0=unlimited)"},
@@ -126,6 +147,10 @@ _CATALOG: dict[str, dict[str, str]] = {
     "sidebar.menu_rename_folder": {
         "ja": "名前を変更...",
         "en": "Rename...",
+    },
+    "sidebar.menu_delete_folder": {
+        "ja": "フォルダを削除...",
+        "en": "Delete folder...",
     },
 
     # ---- dialogs / status ----
@@ -171,6 +196,31 @@ _CATALOG: dict[str, dict[str, str]] = {
     "dialog.rename_folder_body": {
         "ja": "現在の名前: {name}\n新しい名前:",
         "en": "Current name: {name}\nNew name:",
+    },
+    "dialog.delete_folder_title": {
+        "ja": "フォルダを削除",
+        "en": "Delete folder",
+    },
+    "dialog.delete_folder_body": {
+        "ja": "フォルダ「{name}」を削除します。\n"
+              "中の {n} 件のファイルはごみ箱に移動されます。\n"
+              "よろしいですか？",
+        "en": "Delete folder \"{name}\".\n"
+              "{n} file(s) inside will be moved to trash.\n"
+              "Continue?",
+    },
+    "dialog.delete_folder_empty_body": {
+        "ja": "空のフォルダ「{name}」を削除します。よろしいですか？",
+        "en": "Delete empty folder \"{name}\". Continue?",
+    },
+    "dialog.delete_failed": {"ja": "削除失敗", "en": "Delete failed"},
+    "dialog.delete_disallowed": {
+        "ja": "削除不可",
+        "en": "Delete not allowed",
+    },
+    "dialog.workspace_delete_blocked": {
+        "ja": "ワークスペース基点フォルダはここから削除できません。",
+        "en": "The workspace root folder cannot be deleted from here.",
     },
     "dialog.import_error": {"ja": "取り込みエラー", "en": "Import error"},
     "dialog.move_data_parse_failed": {
@@ -288,6 +338,14 @@ _CATALOG: dict[str, dict[str, str]] = {
         "en": "Cannot rename a folder outside the workspace",
     },
     "fm.not_found": {"ja": "フォルダが見つかりません: {path}", "en": "Folder not found: {path}"},
+    "fm.cant_delete_workspace": {
+        "ja": "ワークスペース基点フォルダは削除できません",
+        "en": "The workspace root folder cannot be deleted",
+    },
+    "fm.cant_delete_outside": {
+        "ja": "ワークスペース外のフォルダは削除できません",
+        "en": "Cannot delete a folder outside the workspace",
+    },
 
     # ---- trash errors ----
     "trash.not_in_trash": {

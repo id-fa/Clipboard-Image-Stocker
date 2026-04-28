@@ -15,7 +15,7 @@
 # 開発起動
 ./.venv/Scripts/python.exe -m stocker
 
-# テスト (79 件)
+# テスト (83 件)
 ./.venv/Scripts/python.exe -m pytest tests/
 
 # ポータブル zip ビルド (PyInstaller → portable.flag → Compress-Archive を一括)
@@ -84,9 +84,19 @@ pwsh ./build/make_portable.ps1
 **閉じるのはクリックのみ** (`HoverPreviewWindow.mousePressEvent → dismiss()`)。マウスをコーナー外に出してもプレビューは残る。これを成立させるため:
 - ウィンドウフラグから `WindowTransparentForInput` を、属性から `WA_TransparentForMouseEvents` を **外している**。`QLabel` は子→親へのクリック透過のため `WA_TransparentForMouseEvents` のまま。
 - `cancel()` の意味は「保留中のタイマー停止のみ／表示中は隠さない」。表示直後に view の `leaveEvent → hover_changed(None) → cancel()` が走っても消えないのはこのため。`_pending_path` も表示中はクリアしない (再ホバー時の dedup 維持)。
-- 完全に閉じる時は `dismiss()` (= タイマー停止 + `_pending_path` クリア + `hide()`)。`set_enabled(False)` と `mousePressEvent` から呼ぶ。
+- 完全に閉じる時は `dismiss()` (= タイマー停止 + `_pending_path` クリア + `_stop_movie()` + `hide()`)。`set_enabled(False)` と `mousePressEvent` から呼ぶ。
 
 ツールバーの「ホバー拡大」チェックボックスから `set_enabled(bool)` で全停止可能。OFF 中は `schedule()` が即 return + 表示中のプレビューも `dismiss()`。設定は `AppConfig.hover_preview_enabled` (デフォルト ON)。
+
+#### アニメ GIF / WebP 再生
+`_show_now()` で `QImageReader(path).supportsAnimation() and imageCount() > 1` を判定。アニメなら `_show_animated()` で `QMovie` を **GUI スレッド上に** 生成 (QMovie はスレッド移動不可) し `setScaledSize()` でスクリーンに合わせ縮小して `start()`。静止画は従来どおり `_LoadJob` (PIL → QPixmap) で worker 経由。
+
+切替境界 (`_show_animated` / `_on_loaded`) と `dismiss()` で必ず `_stop_movie()` (`stop()` + `deleteLater()`) を呼んで前回の QMovie を確実に解放する。設定 `AppConfig.hover_preview_animate` (デフォルト ON、ツールバー「アニメ再生」チェックボックス)。OFF にすると静止画経路に固定され、現在再生中のプレビューも `dismiss()` で即停止。`QMovie.isValid()` が False の場合は静止画にフォールバック。
+
+注意点:
+- アニメ判定は `imageCount() > 1` で行うので、単一フレーム GIF は静止画扱い (PIL 経路)。
+- QMovie がファイルハンドルを保持するため、プレビュー表示中の対象ファイルは Windows ロックがかかる (移動・リネーム失敗の可能性)。ただしクリックで dismiss → `deleteLater` で即解放されるので実害は限定的。
+- PyInstaller spec の `excludes` には `QtImageFormats` が無く、`qwebp.dll` プラグインが取り込まれるので凍結ビルドでもアニメ WebP が動作する。
 
 ### ごみ箱と復元
 - `<workspace>/.trash/` に `<stem>_<ts_ms>.<ext>` で時刻スタンプ付き保存。ボリューム跨ぎは `os.replace` → `shutil.move` フォールバック。
@@ -105,6 +115,16 @@ pwsh ./build/make_portable.ps1
 4. `trash.rewrite_origin_paths(workspace, old_rel, new_rel)` で `trash_index.json` の `origin_folder_rel` をサブツリー含めて更新 (これがないと復元先がフォルダ消失扱いになる)
 5. アクティブパスがリネームツリー配下なら新パスに翻訳して `_activate_folder()` で再構築 (DB 再オープン・モデル replace・FS watcher 復帰・`cfg.last_active_root` 永続化を一括)
 
+### フォルダの削除
+サイドバー右クリック「フォルダを削除...」で `MainWindow._on_delete_folder_requested` を呼ぶ。リネームと同じくワークスペース基点は拒否。手順:
+1. サブツリーを `os.walk` で走査し全ファイルを `(file, file.parent)` ペアで収集 (`HIDDEN_DIR_NAMES` = `.stocker` / `.trash` はスキップ)。`file.parent` が src_root になるのは「workspace 配下の全サブフォルダは管理フォルダ」という前提のため。
+2. 件数を出して確認ダイアログ (空フォルダ用に別キー `dialog.delete_folder_empty_body`)。
+3. **対象配下の全 DB をクローズ**してから削除に進む (リネームと同じく SQLite ロック対策)
+4. アクティブがサブツリー配下なら `fs_watcher.watch(None)` + `paste_queue.set_target_root(None)`
+5. `trash_svc.move_to_trash(ws, pairs)` で全ファイルをごみ箱へ。複数フォルダにまたがる場合は `origin_folder_rel` がそれぞれの親フォルダになるので、復元時に `trash.restore()` 内の `target_folder.mkdir(parents=True, exist_ok=True)` で消失したフォルダが再作成される。
+6. `FolderManager.delete_folder()` で `shutil.rmtree()` (これにより各管理フォルダの `.stocker/` も含めて消える)
+7. サイドバー再構築。アクティブが消えていれば `_activate_folder(workspace)` で復帰
+
 ### 国際化 (i18n)
 `src/stocker/i18n.py` は辞書ベースの軽量 i18n (Qt Linguist 不採用 ─ ビルドステップ追加と PyInstaller の data 取り込みを避けるため)。
 - `detect_language()` は `QLocale.system().language()` が日本語なら `"ja"`、それ以外は `"en"`。`main.py` で `QApplication` 構築直後に `set_language(detect_language())` を呼ぶ。
@@ -119,6 +139,19 @@ pwsh ./build/make_portable.ps1
 
 マスター画像はリポジトリルートの `icon_base.png`。Pillow で 256 PNG と マルチサイズ ICO を派生生成する (再生成が必要なら同様の Pillow ワンライナーで)。パッケージ内部に置くことで `db/schema.sql` と同じ `Path(__file__).resolve().parent / ...` パターンで参照でき、PyInstaller でも `datas` に追加するだけで `_internal/stocker/assets/icons/` に展開される。
 
+### システムトレイ (最小化でトレイに格納)
+`MainWindow.__init__` で `QSystemTrayIcon.isSystemTrayAvailable()` を判定し、利用可なら `QSystemTrayIcon` を生成 (アプリアイコン使用、メニューは「表示 / 終了」)。設定 `AppConfig.minimize_to_tray` (デフォルト OFF) と組み合わせ、ON の時のみトレイ常駐させる。
+
+挙動:
+- **× ボタンは通常終了** (closeEvent → クリーンアップ → quit)。トレイメニュー「終了」も `self.close()` 経由で同じ。
+- **最小化 (`changeEvent` の `WindowStateChange` × `isMinimized()`)** で設定 ON のとき `QTimer.singleShot(0, self.hide)` で hide。changeEvent 内で直接 `hide()` を呼ぶと Windows のウィンドウステートが壊れるので必ず単発タイマー経由。
+- **復元** はトレイアイコンの Trigger (シングルクリック) または DoubleClick → `_show_from_tray()` (`showNormal()` + `activateWindow()` + `raise_()`)。`showNormal()` が `Minimized` フラグも同時にクリアする。
+- **設定 OFF への切替時** にウィンドウが隠れたままだとユーザーが見失うので `_on_minimize_to_tray_changed` 内で `_show_from_tray()` を呼んで強制復元。
+- `closeEvent` で `self._tray.hide()` してからクリーンアップ (トレイアイコンが終了後に残らないように)。
+- 起動時に `cfg.minimize_to_tray and tray_available` で `set_minimize_to_tray()` を初期化、`set_minimize_to_tray_available(tray_available)` でトレイ非対応プラットフォーム時にチェックボックス自体を無効化。`blockSignals(True)` 内で値設定するので初期化中の偽トグル発火はなし。
+
+`setQuitOnLastWindowClosed(True)` (Qt デフォルト) を利用。トレイに隠れている間は「最後のウィンドウが閉じた」状態にならないのでアプリ継続、× で実際に閉じれば last window で quit。
+
 ### About ダイアログ
 ツールバー右端「バージョン情報...」(EN: "About...") から `QMessageBox.about()`。表示内容は `app_paths.py` の `APP_VERSION`, `APP_AUTHOR`, `APP_HOMEPAGE` を `tr("about.body", ...)` の HTML テンプレートに差し込む。URL は `<a href>` でクリック → ブラウザ起動。`pyproject.toml` の `version` と `APP_VERSION` は揃える運用 (`make_portable.ps1` が pyproject から zip ファイル名を作るため)。
 
@@ -132,7 +165,7 @@ pwsh ./build/make_portable.ps1
 | `src/stocker/app_paths.py` | パス定数 (`STOCKER_DIRNAME=".stocker"`, `TRASH_DIRNAME=".trash"`, `HIDDEN_DIR_NAMES`) + アプリメタ (`APP_NAME`, `APP_VERSION`, `APP_AUTHOR`, `APP_HOMEPAGE`) |
 | `src/stocker/config.py` | `AppConfig` dataclass、`%APPDATA%/Stocker/config.json` 永続化 (ポータブル時は `./userdata/`) |
 | `src/stocker/db/metadata_db.py` | フォルダごとの SQLite (WAL, mmap, bulk upsert) |
-| `src/stocker/core/folder_manager.py` | workspace + サブフォルダ管理 (作成 / リネーム) |
+| `src/stocker/core/folder_manager.py` | workspace + サブフォルダ管理 (作成 / リネーム / 削除) |
 | `src/stocker/core/scanner.py` | 非再帰 diff スキャン |
 | `src/stocker/core/paste_queue.py` | クリップボード貼り付けキュー (核心) |
 | `src/stocker/core/clipboard_watcher.py` | Ctrl+V のブリッジ + 自動取込 (フィンガープリント dedup) |
@@ -142,11 +175,11 @@ pwsh ./build/make_portable.ps1
 | `src/stocker/core/trash.py` | ごみ箱 + 復元 + auto_purge + `rewrite_origin_paths` (フォルダリネーム追従) |
 | `src/stocker/utils/clipboard_files.py` | Explorer 互換のファイル/画像コピー (Preferred DropEffect) |
 | `src/stocker/ui/main_window.py` | UI 統括ハブ (~960 行) |
-| `src/stocker/ui/toolbar.py` | ツールバー (列数/ソート/貼り付け形式/自動取込/ホバー/ツリー字/ごみ箱/About) |
-| `src/stocker/ui/sidebar.py` | ツリーサイドバー + D&D ハイライト + フォルダリネーム |
+| `src/stocker/ui/toolbar.py` | ツールバー (列数/ソート/貼り付け形式/自動取込/ホバー/アニメ再生/トレイ格納/ツリー字/ごみ箱/About) |
+| `src/stocker/ui/sidebar.py` | ツリーサイドバー + D&D ハイライト + フォルダリネーム/削除 |
 | `src/stocker/ui/thumbnail_view.py` | 仮想化 IconMode QListView |
 | `src/stocker/ui/thumbnail_model.py` | QAbstractListModel + dedupe + mime |
-| `src/stocker/ui/hover_preview.py` | フローティングプレビュー (mouse-transparent) |
+| `src/stocker/ui/hover_preview.py` | フローティングプレビュー (静止画 + アニメ GIF/WebP via QMovie) |
 | `build/stocker.spec` | PyInstaller spec (icon 埋込・assets バンドル・15+ Qt サブモジュール除外) |
 | `build/make_portable.ps1` | `pyinstaller` → `portable.flag` → `Compress-Archive` を一括実行 |
 
@@ -162,7 +195,7 @@ pwsh ./build/make_portable.ps1
 - `test_clipboard_watcher.py` (9): フィンガープリント dedup、autocapture トグル、自己コピー抑制、起動シード
 - `test_move_service.py` (7): 同一/異ボリューム、衝突採番、進捗キャンセル、日本語
 - `test_trash.py` (12): origin tracking、復元 (衝突/フォルダ消失含む)、auto_purge、index 整合性、フォルダリネーム後の origin 追従
-- `test_folder_manager.py` (10): workspace 設定、subfolder 作成、hidden 除外、リネーム (workspace 拒否/不正名/衝突/外部拒否)
+- `test_folder_manager.py` (14): workspace 設定、subfolder 作成、hidden 除外、リネーム (workspace 拒否/不正名/衝突/外部拒否)、削除 (basic/workspace 拒否/外部拒否/非存在)
 - `test_clipboard_files.py` (5): URL roundtrip、DropEffect バイト列確認、画像コピー
 - `test_i18n.py` (8): ja/en 切替、format kwargs、未知キーフォールバック、`detect_language()` ホスト非依存
 
@@ -219,6 +252,8 @@ Twitter のペーストハンドラは `e.clipboardData.files` のみを見る�
 - `paste_format` ("png"|"jpeg"), `paste_jpeg_quality`
 - `clipboard_autocapture` (bool, default False) — クリップボード自動取込の ON/OFF
 - `hover_preview_enabled` (bool, default True) — ホバー拡大プレビューの ON/OFF
+- `hover_preview_animate` (bool, default True) — 拡大プレビューでアニメ GIF/WebP を再生するか
+- `minimize_to_tray` (bool, default False) — 最小化時にウィンドウをタスクトレイに格納する (× ボタンは通常終了)
 - `trash_auto_delete_days` (0=無効)
 - 起動時に `auto_purge(workspace, trash_auto_delete_days)` を実行
 
