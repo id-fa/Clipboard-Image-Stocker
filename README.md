@@ -56,3 +56,8 @@ X (Twitter) の Web UI のドロップハンドラは `e.dataTransfer.files` だ
 ペーストハンドラは `e.clipboardData.files` (CF_HDROP) のみを使うので 4 枚まで正常に
 添付できます。Discord / Slack / GitHub / Gmail 等 D&D で問題が出ない先では従来どおり
 ドラッグ可能です。
+
+## 関連
+
+[クリップボード処理に特化したEagleライクの画像ストッカーを作る - ふぁメモ](https://fa.hatenadiary.jp/entry/20260428/1777353925)
+
