@@ -173,7 +173,27 @@ class Sidebar(QTreeView):
                 tr("sidebar.menu_delete_folder"),
                 lambda: self.delete_folder_requested.emit(Path(path_str)),
             )
+        if kind in ("workspace", "folder") and self._model.hasChildren(idx):
+            menu.addSeparator()
+            menu.addAction(
+                tr("sidebar.menu_expand_subtree"),
+                lambda: self.expandRecursively(idx),
+            )
+            menu.addAction(
+                tr("sidebar.menu_collapse_subtree"),
+                lambda: self._collapse_recursively(idx),
+            )
         menu.exec(e.globalPos())
+
+    def _collapse_recursively(self, idx: QModelIndex) -> None:
+        """Collapse this node and every descendant (Qt has no built-in for this)."""
+        if not idx.isValid():
+            return
+        # Walk depth-first and collapse children before parents so descendant
+        # expansion state doesn't get implicitly preserved.
+        for r in range(self._model.rowCount(idx)):
+            self._collapse_recursively(self._model.index(r, 0, idx))
+        self.collapse(idx)
 
     # ---- helpers ----
 

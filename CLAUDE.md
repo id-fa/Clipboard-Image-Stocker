@@ -50,6 +50,29 @@ pwsh ./build/make_portable.ps1
 - `policy_for(file_count)` が `MEMORY_ONLY | MEMORY_PLUS_DISK` を返す
 - `cache.get()` は memory miss → disk → 双方 miss なら `request_thumbnail` シグナル経由でワーカー投入
 
+### サムネイルセルのアスペクト比
+ツールバーのコンボボックスで `1:1 | 4:3 | 16:9 | 3:4 | 9:16` から選択。`ThumbnailView._aspect_w/h` を保持し、`_apply_size()` で `cell_w` を columns/viewport から決め、`thumb_h = round(thumb_w * ah / aw)` を `model.set_cell_size(w, h)` に渡す。`ThumbnailModel` は従来の正方形固定 `_target_size` から `_thumb_w / _thumb_h` の長方形対応に拡張、`SizeHintRole` も `QSize(thumb_w + 16, thumb_h + 32)` を返す。
+
+サムネキャッシュキーの `target_size` は `max(thumb_w, thumb_h)` で派生 (= 長辺)。これにより:
+- 横長アスペクト同士 (1:1 ↔ 16:9 ↔ 4:3) は同じ longest-side でキャッシュを使い回せる
+- 縦長アスペクト (3:4 / 9:16) は cell_h が cell_w を上回るので longest-side が増え再生成、解像度が確保される
+
+`set_target_size(size)` は後方互換のシムとして `set_cell_size(size, size)` に委譲。設定 `AppConfig.thumbnail_aspect: str` (デフォルト `"1:1"`)。
+
+選択した比率と画像本来の比率が一致する場合のみセル全体が埋まる (Delegate 側は従来どおり `KeepAspectRatio` で描画)。混在時は元の比率を保ったまま余白が出る。
+
+### ファイル名フィルタ (インクリメンタルサーチ)
+ツールバーの「絞り込み」`QLineEdit` (180px 固定、clear ボタン付き) に文字を入れるたび `textChanged` → `_on_filter_changed()` → `proxy.setFilterFixedString(text)`。`Ctrl+F` で `_toolbar.focus_filter()` (フォーカス + selectAll)。
+
+実装は `ThumbnailFilterProxy(QSortFilterProxyModel)` をビューとモデルの間に挟む方式 (`thumbnail_model.py` 末尾)。
+- `setFilterCaseSensitivity(CaseInsensitive)` × `setFilterRole(DisplayRole)` で `FileItem.name` に対する大小無視の部分一致
+- `sort(-1)` でソース順 (= `ThumbnailModel` のソート挿入結果) を維持。proxy 自前のソートは無効化
+- `set_cell_size(w, h)` をソースに転送する override を持つので、`ThumbnailView._apply_size()` は proxy/source の差を意識せずそのまま `model.set_cell_size()` を呼べる
+
+サブフォルダは構造的に対象外 ─ `ThumbnailModel` は元々 active root のアイテムしか持たない (非再帰スキャン由来)。フィルタは proxy なので、貼り付け完了 / FS Watcher / 移動 / 削除 / トラッシュ復元など全ての行追加・削除がフィルタを通して即時反映される (条件不一致なら自動的に非表示)。
+
+フィルタ文字列は **永続化しない** (起動時に意図しない非表示状態が残るのを避けるため)。MainWindow は `self._model` (source) と `self._proxy` の両方を保持し、ビューには proxy をセット、それ以外の `_model.append_item()` 等は従来どおりソースに直接呼ぶ。`idx.data(ITEM_ROLE)` 経由の FileItem 取得・`mimeData()` での D&D・選択・コンテキストメニューはすべて proxy を透過して動作する。
+
 ### クリップボード貼り付けキュー (核心機能)
 `core/paste_queue.py`:
 - Ctrl+V 押下時に **`QImage.copy()` で深いコピー**を取り `queue.Queue` へ → UI スレッドは即解放
@@ -87,6 +110,9 @@ pwsh ./build/make_portable.ps1
 ### サイドバー D&D ハイライトと Ctrl 修飾
 - `Sidebar.dragMoveEvent` がカーソル下のフォルダノードを `DROP_HIGHLIGHT_BRUSH` (オレンジ半透明) で塗る (落下先を視認しやすく)
 - `Sidebar.dropEvent` で `keyboardModifiers() & ControlModifier` を判定し signal 引数 `mode_str = "copy" | "move"` に乗せる。`MoveService.perform_move(mode=…)` で挙動を切替
+
+### サイドバーのサブツリー一括展開/折りたたみ
+フォルダ／ワークスペースノードの右クリックメニューに「ここからツリーを全て展開」「ここからツリーを全て閉じる」を追加 (子を持つノード限定で表示)。展開は Qt 標準の `QTreeView.expandRecursively(idx)` を使用、折りたたみは Qt に対応 API が無いので `Sidebar._collapse_recursively(idx)` を自前実装 (深さ優先で子→親の順に `collapse()`)。ごみ箱ノードは `kind != "folder"` かつ子無しなので自然に対象外。
 
 ### サイドバーのフォルダ件数表示
 ごみ箱と同様に各フォルダノード名の右に `({n})` で画像数を表示する (件数 0 のフォルダは数値非表示)。サブフォルダを含む合算ではなく、そのフォルダ直下の画像数のみ (= scanner の非再帰走査と同じ範囲)。
@@ -206,11 +232,11 @@ PENDING バッジのオレンジ `(220,140,0,220)` と HoverPreview 背景は両
 | `src/stocker/core/trash.py` | ごみ箱 + 復元 + auto_purge + `rewrite_origin_paths` (フォルダリネーム追従) |
 | `src/stocker/utils/clipboard_files.py` | Explorer 互換のファイル/画像コピー (Preferred DropEffect) |
 | `src/stocker/ui/main_window.py` | UI 統括ハブ (~960 行) |
-| `src/stocker/ui/toolbar.py` | ツールバー (列数/ソート/貼り付け形式/自動取込/ホバー/アニメ再生/トレイ格納/ダークテーマ/ツリー字/ごみ箱/About) |
-| `src/stocker/ui/sidebar.py` | ツリーサイドバー + D&D ハイライト + フォルダリネーム/削除 + フォルダ件数表示 |
+| `src/stocker/ui/toolbar.py` | ツールバー (列数/比率/ソート/絞り込み/貼り付け形式/自動取込/ホバー/アニメ再生/トレイ格納/ダークテーマ/ツリー字/ごみ箱/About) |
+| `src/stocker/ui/sidebar.py` | ツリーサイドバー + D&D ハイライト + フォルダリネーム/削除 + フォルダ件数表示 + サブツリー一括展開/折りたたみ |
 | `src/stocker/ui/theme.py` | Fusion + `QPalette` ベースのライト/ダーク切替、明示色のヘルパー (`drop_highlight_color`, `thumb_placeholder_color`) |
 | `src/stocker/ui/thumbnail_view.py` | 仮想化 IconMode QListView |
-| `src/stocker/ui/thumbnail_model.py` | QAbstractListModel + dedupe + mime + ソート位置挿入 (`set_sort` / `_sorted_insert_position`) |
+| `src/stocker/ui/thumbnail_model.py` | QAbstractListModel + dedupe + mime + ソート位置挿入 (`set_sort` / `_sorted_insert_position`) + 長方形セル (`set_cell_size`) + ファイル名フィルタ proxy (`ThumbnailFilterProxy`) |
 | `src/stocker/ui/hover_preview.py` | フローティングプレビュー (静止画 + アニメ GIF/WebP via QMovie) |
 | `build/stocker.spec` | PyInstaller spec (icon 埋込・assets バンドル・15+ Qt サブモジュール除外) |
 | `build/make_portable.ps1` | `pyinstaller` → `portable.flag` → `Compress-Archive` を一括実行 |
@@ -280,6 +306,7 @@ Twitter のペーストハンドラは `e.clipboardData.files` のみを見る�
 
 `AppConfig` (`src/stocker/config.py`):
 - `workspace_root`, `last_active_root`, `columns` (1〜16), `sort_key/dir`
+- `thumbnail_aspect` ("1:1"|"4:3"|"16:9"|"3:4"|"9:16", default "1:1") — サムネイルセルのアスペクト比
 - `sidebar_font_size` (7〜28pt)
 - `paste_format` ("png"|"jpeg"), `paste_jpeg_quality`
 - `clipboard_autocapture` (bool, default False) — クリップボード自動取込の ON/OFF

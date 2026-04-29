@@ -49,7 +49,7 @@ from stocker.ui.hover_preview import HoverPreviewWindow
 from stocker.ui.sidebar import Sidebar
 from stocker.ui.thumbnail_delegate import ThumbnailDelegate
 from stocker.ui.theme import apply_theme
-from stocker.ui.thumbnail_model import ITEM_ROLE, ThumbnailModel
+from stocker.ui.thumbnail_model import ITEM_ROLE, ThumbnailFilterProxy, ThumbnailModel
 from stocker.ui.thumbnail_view import ThumbnailView
 from stocker.ui.toolbar import StockerToolbar
 from stocker.utils.clipboard_files import (
@@ -86,6 +86,7 @@ class MainWindow(QMainWindow):
         self.addToolBar(self._toolbar)
         self._toolbar.blockSignals(True)
         self._toolbar.set_columns(cfg.columns)
+        self._toolbar.set_aspect(cfg.thumbnail_aspect)
         self._toolbar.set_sort(cfg.sort_key, cfg.sort_dir)
         self._toolbar.set_paste_format(cfg.paste_format)
         self._toolbar.set_autocapture(cfg.clipboard_autocapture)
@@ -101,6 +102,8 @@ class MainWindow(QMainWindow):
         self._toolbar.set_workspace_requested.connect(self._on_set_workspace)
         self._toolbar.add_subfolder_requested.connect(self._on_add_subfolder_clicked)
         self._toolbar.columns_changed.connect(self._on_columns_changed)
+        self._toolbar.aspect_changed.connect(self._on_aspect_changed)
+        self._toolbar.filter_text_changed.connect(self._on_filter_changed)
         self._toolbar.sort_changed.connect(self._on_sort_changed)
         self._toolbar.paste_format_changed.connect(self._on_paste_format_changed)
         self._toolbar.clipboard_autocapture_changed.connect(self._on_autocapture_changed)
@@ -134,10 +137,13 @@ class MainWindow(QMainWindow):
         self._model.set_cache_lookup(self._cache.get)
         self._model.set_sort(cfg.sort_key, cfg.sort_dir)
         self._model.request_thumbnail.connect(self._enqueue_thumbnail)
+        self._proxy = ThumbnailFilterProxy(self)
+        self._proxy.setSourceModel(self._model)
         self._view = ThumbnailView(self)
-        self._view.setModel(self._model)
+        self._view.setModel(self._proxy)
         self._view.setItemDelegate(ThumbnailDelegate(self))
         self._view.set_columns(cfg.columns)
+        self._view.set_aspect(cfg.thumbnail_aspect)
         self._view.item_double_clicked.connect(self._on_item_double_clicked)
         self._view.drop_files.connect(self._on_drop_external_files_into_active)
         self._view.hover_changed.connect(self._on_hover_changed)
@@ -176,6 +182,8 @@ class MainWindow(QMainWindow):
         self._rename_shortcut.activated.connect(self._on_rename_shortcut)
         self._delete_shortcut = QShortcut(QKeySequence("Delete"), self._view)
         self._delete_shortcut.activated.connect(self._on_delete_shortcut)
+        self._find_shortcut = QShortcut(QKeySequence.StandardKey.Find, self)
+        self._find_shortcut.activated.connect(self._toolbar.focus_filter)
 
         # Status bar
         self.setStatusBar(QStatusBar(self))
@@ -551,6 +559,18 @@ class MainWindow(QMainWindow):
         self._view.set_columns(n)
         self._cfg.columns = n
         save_config(self._cfg)
+
+    def _on_aspect_changed(self, ratio: str) -> None:
+        if ratio == self._cfg.thumbnail_aspect:
+            return
+        self._cfg.thumbnail_aspect = ratio
+        save_config(self._cfg)
+        self._view.set_aspect(ratio)
+
+    def _on_filter_changed(self, text: str) -> None:
+        # Filter is intentionally session-only (not persisted) — opening the app
+        # to a non-empty filter would be confusing.
+        self._proxy.setFilterFixedString(text)
 
     def _on_sort_changed(self, key: str, direction: str) -> None:
         self._cfg.sort_key = key

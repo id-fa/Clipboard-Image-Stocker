@@ -7,6 +7,7 @@ from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
     QLabel,
+    QLineEdit,
     QSlider,
     QSpinBox,
     QToolBar,
@@ -18,6 +19,8 @@ from stocker.i18n import tr
 
 class StockerToolbar(QToolBar):
     columns_changed = Signal(int)
+    aspect_changed = Signal(str)
+    filter_text_changed = Signal(str)
     sort_changed = Signal(str, str)
     set_workspace_requested = Signal()
     add_subfolder_requested = Signal()
@@ -51,6 +54,16 @@ class StockerToolbar(QToolBar):
         self.addWidget(self._cols_label)
         self._slider.valueChanged.connect(lambda v: self._cols_label.setText(str(v)))
 
+        self.addWidget(QLabel(tr("toolbar.aspect_label")))
+        self._aspect = QComboBox(self)
+        self._aspect.setToolTip(tr("toolbar.aspect_tooltip"))
+        for r in ("1:1", "4:3", "16:9", "3:4", "9:16"):
+            self._aspect.addItem(r, r)
+        self.addWidget(self._aspect)
+        self._aspect.currentIndexChanged.connect(
+            lambda _i: self.aspect_changed.emit(self._aspect.currentData())
+        )
+
         self.addSeparator()
         self.addWidget(QLabel(tr("toolbar.sort_label")))
         self._sort_key = QComboBox(self)
@@ -65,6 +78,16 @@ class StockerToolbar(QToolBar):
         self.addWidget(self._sort_dir)
         self._sort_key.currentIndexChanged.connect(self._emit_sort)
         self._sort_dir.currentIndexChanged.connect(self._emit_sort)
+
+        self.addSeparator()
+        self.addWidget(QLabel(tr("toolbar.filter_label")))
+        self._filter = QLineEdit(self)
+        self._filter.setPlaceholderText(tr("toolbar.filter_placeholder"))
+        self._filter.setToolTip(tr("toolbar.filter_tooltip"))
+        self._filter.setClearButtonEnabled(True)
+        self._filter.setFixedWidth(180)
+        self.addWidget(self._filter)
+        self._filter.textChanged.connect(self.filter_text_changed)
 
         self.addSeparator()
         self.addWidget(QLabel(tr("toolbar.paste_format_label")))
@@ -129,6 +152,22 @@ class StockerToolbar(QToolBar):
 
     def set_columns(self, n: int) -> None:
         self._slider.setValue(max(1, min(16, n)))
+
+    def set_aspect(self, ratio: str) -> None:
+        idx = self._aspect.findData(ratio)
+        if idx >= 0:
+            self._aspect.setCurrentIndex(idx)
+
+    def filter_text(self) -> str:
+        return self._filter.text()
+
+    def set_filter_text(self, text: str) -> None:
+        if self._filter.text() != text:
+            self._filter.setText(text)
+
+    def focus_filter(self) -> None:
+        self._filter.setFocus(Qt.FocusReason.ShortcutFocusReason)
+        self._filter.selectAll()
 
     def set_sort(self, key: str, direction: str) -> None:
         idx = self._sort_key.findData(key)

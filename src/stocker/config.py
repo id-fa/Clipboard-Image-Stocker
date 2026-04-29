@@ -15,6 +15,7 @@ class AppConfig:
     workspace_root: str | None = None
     last_active_root: str | None = None  # active subfolder (or workspace itself)
     columns: int = 6
+    thumbnail_aspect: str = "1:1"  # "1:1" | "4:3" | "16:9" | "3:4" | "9:16"
     sort_key: str = "name"  # "name" or "mtime" or "added"
     sort_dir: str = "asc"  # "asc" or "desc"
     sidebar_font_size: int = 12  # points

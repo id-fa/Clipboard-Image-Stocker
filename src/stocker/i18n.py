@@ -69,6 +69,17 @@ _CATALOG: dict[str, dict[str, str]] = {
         "en": "Add subfolder",
     },
     "toolbar.columns_label": {"ja": " 列数: ", "en": " Columns: "},
+    "toolbar.aspect_label": {"ja": " 比率: ", "en": " Aspect: "},
+    "toolbar.aspect_tooltip": {
+        "ja": "サムネイルセルのアスペクト比。すべての画像が同じ比率なら隙間なく敷き詰められます。",
+        "en": "Thumbnail cell aspect ratio. Images sharing this ratio tile without gaps.",
+    },
+    "toolbar.filter_label": {"ja": " 絞り込み: ", "en": " Filter: "},
+    "toolbar.filter_placeholder": {"ja": "ファイル名", "en": "File name"},
+    "toolbar.filter_tooltip": {
+        "ja": "ファイル名で絞り込み (現在のフォルダのみ。サブフォルダは含みません)",
+        "en": "Filter by file name (current folder only — subfolders are not searched)",
+    },
     "toolbar.sort_label": {"ja": " 並び順: ", "en": " Sort: "},
     "toolbar.sort_name": {"ja": "ファイル名", "en": "Name"},
     "toolbar.sort_mtime": {"ja": "更新日時", "en": "Modified"},
@@ -160,6 +171,14 @@ _CATALOG: dict[str, dict[str, str]] = {
     "sidebar.menu_delete_folder": {
         "ja": "フォルダを削除...",
         "en": "Delete folder...",
+    },
+    "sidebar.menu_expand_subtree": {
+        "ja": "ここからツリーを全て展開",
+        "en": "Expand all from here",
+    },
+    "sidebar.menu_collapse_subtree": {
+        "ja": "ここからツリーを全て閉じる",
+        "en": "Collapse all from here",
     },
 
     # ---- dialogs / status ----

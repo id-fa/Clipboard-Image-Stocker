@@ -20,6 +20,15 @@ MAX_COLUMNS = 16
 # rect, anchored at the bottom-right. 0.4 means a ~16%-area corner trigger.
 HOVER_CORNER_FRAC = 0.4
 
+ASPECT_RATIOS: dict[str, tuple[int, int]] = {
+    "1:1": (1, 1),
+    "4:3": (4, 3),
+    "16:9": (16, 9),
+    "3:4": (3, 4),
+    "9:16": (9, 16),
+}
+DEFAULT_ASPECT = "1:1"
+
 
 class ThumbnailView(QListView):
     item_double_clicked = Signal(object)  # FileItem
@@ -31,6 +40,7 @@ class ThumbnailView(QListView):
         super().__init__(parent)
         self._columns = 6
         self._padding = 16
+        self._aspect_w, self._aspect_h = ASPECT_RATIOS[DEFAULT_ASPECT]
         self.setViewMode(QListView.ViewMode.IconMode)
         self.setMovement(QListView.Movement.Static)
         self.setResizeMode(QListView.ResizeMode.Adjust)
@@ -68,6 +78,16 @@ class ThumbnailView(QListView):
     def columns(self) -> int:
         return self._columns
 
+    def set_aspect(self, ratio: str) -> None:
+        """Pick a thumbnail cell aspect from ASPECT_RATIOS. Unknown values are ignored."""
+        if ratio not in ASPECT_RATIOS:
+            return
+        aw, ah = ASPECT_RATIOS[ratio]
+        if (aw, ah) == (self._aspect_w, self._aspect_h):
+            return
+        self._aspect_w, self._aspect_h = aw, ah
+        self._apply_size()
+
     def resizeEvent(self, e):
         super().resizeEvent(e)
         self._resize_debounce.call()
@@ -75,10 +95,11 @@ class ThumbnailView(QListView):
     def _apply_size(self) -> None:
         viewport_w = max(1, self.viewport().width())
         cell_w = max(64, viewport_w // self._columns - self._padding)
-        target_size = max(48, cell_w - 16)
+        thumb_w = max(48, cell_w - 16)
+        thumb_h = max(48, int(round(thumb_w * self._aspect_h / self._aspect_w)))
         model = self.model()
-        if model is not None and hasattr(model, "set_target_size"):
-            model.set_target_size(target_size)
+        if model is not None and hasattr(model, "set_cell_size"):
+            model.set_cell_size(thumb_w, thumb_h)
         # Trigger layout refresh
         self.scheduleDelayedItemsLayout()
 

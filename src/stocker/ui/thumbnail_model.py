@@ -8,7 +8,16 @@ from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
-from PySide6.QtCore import QAbstractListModel, QMimeData, QModelIndex, QSize, Qt, QUrl, Signal
+from PySide6.QtCore import (
+    QAbstractListModel,
+    QMimeData,
+    QModelIndex,
+    QSize,
+    QSortFilterProxyModel,
+    Qt,
+    QUrl,
+    Signal,
+)
 from PySide6.QtGui import QPixmap
 
 from stocker.core.models import FileItem, FileKind, PendingPaste, ThumbKey
@@ -32,6 +41,10 @@ class ThumbnailModel(QAbstractListModel):
         super().__init__(parent)
         self._items: list[FileItem] = []
         self._root: Path | None = None
+        self._thumb_w: int = 192
+        self._thumb_h: int = 192
+        # Cache key dimension is the longest side so generated pixmaps cover the
+        # cell along whichever axis is larger (tall aspects need taller sources).
         self._target_size: int = 192
         self._sort_key: str = "name"
         self._sort_dir: str = "asc"
@@ -47,17 +60,37 @@ class ThumbnailModel(QAbstractListModel):
         self._cache_get = fn
 
     def set_target_size(self, size: int) -> None:
-        if size <= 0 or size == self._target_size:
+        """Set a square cell size. Equivalent to ``set_cell_size(size, size)``."""
+        self.set_cell_size(size, size)
+
+    def set_cell_size(self, width: int, height: int) -> None:
+        """Set the visible thumbnail rect (excluding label). Cache key tracks the
+        longest side so tall aspects regenerate at higher resolution; switching
+        between aspects with the same longest side reuses cached pixmaps."""
+        if width <= 0 or height <= 0:
             return
-        self._target_size = size
+        if width == self._thumb_w and height == self._thumb_h:
+            return
+        self._thumb_w = width
+        self._thumb_h = height
+        new_target = max(width, height)
+        target_changed = new_target != self._target_size
+        self._target_size = new_target
         if self._items:
             top = self.index(0)
             bot = self.index(len(self._items) - 1)
-            self.dataChanged.emit(top, bot, [Qt.ItemDataRole.DecorationRole])
+            roles = [int(Qt.ItemDataRole.SizeHintRole)]
+            if target_changed:
+                roles.append(int(Qt.ItemDataRole.DecorationRole))
+            self.dataChanged.emit(top, bot, roles)
 
     @property
     def target_size(self) -> int:
         return self._target_size
+
+    @property
+    def thumb_size(self) -> tuple[int, int]:
+        return self._thumb_w, self._thumb_h
 
     @property
     def root(self) -> Path | None:
@@ -210,8 +243,7 @@ class ThumbnailModel(QAbstractListModel):
         if role == int(Qt.ItemDataRole.ToolTipRole):
             return item.name
         if role == int(Qt.ItemDataRole.SizeHintRole):
-            s = self._target_size + 32  # extra room for label
-            return QSize(self._target_size + 16, s)
+            return QSize(self._thumb_w + 16, self._thumb_h + 32)  # +32: label
         if role == int(Qt.ItemDataRole.DecorationRole):
             return self._pixmap_for(item)
         if role == ITEM_ROLE:
@@ -296,3 +328,26 @@ class ThumbnailModel(QAbstractListModel):
             self.request_thumbnail.emit(key, from_rel(self._root, item.rel_path))
             return None
         return pm
+
+
+class ThumbnailFilterProxy(QSortFilterProxyModel):
+    """Filename-substring filter that sits between ThumbnailModel and ThumbnailView.
+
+    Forwards display-config setters (``set_cell_size``) so the view doesn't need
+    to know whether it is talking to a proxy or the source. Filtering is
+    case-insensitive substring on DisplayRole (i.e. ``FileItem.name``).
+    """
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setFilterCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
+        self.setFilterRole(int(Qt.ItemDataRole.DisplayRole))
+        # Source order is curated by ThumbnailModel (sort-aware insertion); we
+        # never want the proxy to reshuffle.
+        self.setDynamicSortFilter(True)
+        self.sort(-1)
+
+    def set_cell_size(self, w: int, h: int) -> None:
+        src = self.sourceModel()
+        if isinstance(src, ThumbnailModel):
+            src.set_cell_size(w, h)
