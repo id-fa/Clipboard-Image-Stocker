@@ -15,7 +15,7 @@
 # 開発起動
 ./.venv/Scripts/python.exe -m stocker
 
-# テスト (83 件)
+# テスト (87 件)
 ./.venv/Scripts/python.exe -m pytest tests/
 
 # ポータブル zip ビルド (PyInstaller → portable.flag → Compress-Archive を一括)
@@ -36,6 +36,8 @@ pwsh ./build/make_portable.ps1
 ### Scanner は非再帰
 `core/scanner.py` の `_iter_image_files()` は **トップレベルのみ**を走査する。各サブフォルダは独立 DB を持つので再帰すると二重計上になる。サブディレクトリも `.stocker` も `.trash` もまとめて skip。
 
+公開ヘルパー `count_image_files(root)` は同じ走査ロジックでファイル数だけを返す (DB を開かずに済むのでサイドバーのフォルダ件数表示用)。
+
 ### パスとファイル名
 - DB の `rel_path` は **forward-slash** (`utils.paths.normalize_rel`)。Windows パス変換は `from_rel(root, rel)`。
 - ディスクサムネキャッシュは SHA1 命名 (`<sha1(rel)>_<size>.webp`) で日本語ファイル名衝突を回避。
@@ -52,7 +54,7 @@ pwsh ./build/make_portable.ps1
 `core/paste_queue.py`:
 - Ctrl+V 押下時に **`QImage.copy()` で深いコピー**を取り `queue.Queue` へ → UI スレッドは即解放
 - ワーカー QThread は **1 本のみ** (タイムスタンプ命名の順序保証)
-- `pending_added` シグナル → ThumbnailModel が PENDING 行を即追加 → 保存完了で `paste_completed` → 実 FileItem に差し替え
+- `pending_added` シグナル → ThumbnailModel が PENDING 行をソート位置に即追加 → 保存完了で `paste_completed` → PENDING 行を**削除**して実 FileItem を**ソート位置に再挿入** (in-place swap ではない)
 - 失敗は指数バックオフ 3 回 → エラー UI
 - 連打 30 件で取りこぼしゼロ (`tests/test_paste_queue.py`)
 
@@ -60,7 +62,15 @@ pwsh ./build/make_portable.ps1
 クリップボードに **ファイル URL があればそれを `import_files()`**、無ければ画像を `PasteQueue.enqueue()`。Explorer の Ctrl+V と整合する挙動。
 
 ### サムネ二重表示問題への対処
-`paste_completed` と FS Watcher の `directoryChanged` が同じ新規ファイルを別ルートで model に追加する競合があった。`ThumbnailModel.append_item()` は **`rel_path` 重複時に no-op** で吸収する。新しい行を入れる際は必ずこのメソッド経由で。
+`paste_completed` と FS Watcher の `directoryChanged` が同じ新規ファイルを別ルートで model に追加する競合があった。`ThumbnailModel.append_item()` は **`rel_path` 重複時に no-op** で吸収する。新しい行を入れる際は必ずこのメソッド経由で (名前は append だが実体はソート位置挿入。後述)。
+
+### ソート順を維持した挿入
+`ThumbnailModel` は現在のソートキー/向き (`name`/`mtime`/`added` × `asc`/`desc`) を `set_sort()` で保持し、`append_item()` / `add_pending()` / `replace_pending_with_real()` はすべて **`_sorted_insert_position(item)` で算出した位置に挿入**する。これにより:
+- 貼り付け画像はソート順に従った位置に着地する (以前は無条件で先頭に積まれていた)
+- FS Watcher・外部 D&D・フォルダ間 move/copy・ごみ箱からの復元など、ランタイムで model に行を足す全経路で順序が保たれる
+- ソート切替 (`_on_sort_changed`) では `MainWindow` が `model.set_sort(...)` で同期してから `db.list_files(...)` で全件 replace する
+
+`replace_pending_with_real()` は in-place swap ではなく **PENDING 行削除 → `append_item(real)` でソート位置挿入** に変更されているため、PENDING/DISK が同じ rel_path で並ぶ過渡状態は dedupe で吸収される。
 
 ### 外部 D&D
 - 受信: `ThumbnailView` に `setDragDropMode(DragDrop)` + `viewport().setAcceptDrops(True)` + `Model.canDropMimeData` を返す。これらの 1 つでも欠けると外部からの D&D が無視される。
@@ -77,6 +87,15 @@ pwsh ./build/make_portable.ps1
 ### サイドバー D&D ハイライトと Ctrl 修飾
 - `Sidebar.dragMoveEvent` がカーソル下のフォルダノードを `DROP_HIGHLIGHT_BRUSH` (オレンジ半透明) で塗る (落下先を視認しやすく)
 - `Sidebar.dropEvent` で `keyboardModifiers() & ControlModifier` を判定し signal 引数 `mode_str = "copy" | "move"` に乗せる。`MoveService.perform_move(mode=…)` で挙動を切替
+
+### サイドバーのフォルダ件数表示
+ごみ箱と同様に各フォルダノード名の右に `({n})` で画像数を表示する (件数 0 のフォルダは数値非表示)。サブフォルダを含む合算ではなく、そのフォルダ直下の画像数のみ (= scanner の非再帰走査と同じ範囲)。
+
+- 集計は `core/scanner.py` の `count_image_files(folder)` で行う。DB を開かずに `scandir` するだけなので軽量
+- フル更新: `MainWindow._refresh_sidebar()` が全フォルダの件数を集めて `Sidebar.populate(..., folder_counts=...)` に渡す (ワークスペース変更・フォルダ作成/リネーム/削除・起動時)
+- 部分更新: 件数が変わる経路で `_refresh_folder_count(folder)` → `Sidebar.update_folder_count(path, n)` で対象ノードのテキストだけ書き換え (paste 完了 / 外部 D&D / move/copy 結果 / 削除 / トラッシュ復元 / FS Watcher 検知 / `_activate_folder` のスキャン差分が出たとき)
+- ごみ箱ノードは別 (`update_trash_count`) なので `_refresh_folder_count` は trash root を no-op で素通りさせる
+- リアルタイム集計が必要なら `count_image_files()` のままで十分軽い。重くなったら遅延化を検討するが、現状は同期で問題なし
 
 ### ホバー拡大プレビュー
 **トリガーはサムネイル右下コーナーのみ**。`ThumbnailView.mouseMoveEvent` が `visualRect(idx)` の右下 40%×40% (`HOVER_CORNER_FRAC = 0.4`、最小 16px) に入った時だけ `hover_changed(item)` を発火する。`entered` シグナルは未接続 (アイテム全体で発火するため使えない)。コーナー外/インデックス無効/`leaveEvent` ではいずれも `hover_changed(None)` を出す。`HOVER_DELAY_MS = 1200` (`src/stocker/ui/hover_preview.py:17`)。
@@ -178,7 +197,7 @@ PENDING バッジのオレンジ `(220,140,0,220)` と HoverPreview 背景は両
 | `src/stocker/config.py` | `AppConfig` dataclass、`%APPDATA%/Stocker/config.json` 永続化 (ポータブル時は `./userdata/`) |
 | `src/stocker/db/metadata_db.py` | フォルダごとの SQLite (WAL, mmap, bulk upsert) |
 | `src/stocker/core/folder_manager.py` | workspace + サブフォルダ管理 (作成 / リネーム / 削除) |
-| `src/stocker/core/scanner.py` | 非再帰 diff スキャン |
+| `src/stocker/core/scanner.py` | 非再帰 diff スキャン + `count_image_files()` (サイドバー件数表示用) |
 | `src/stocker/core/paste_queue.py` | クリップボード貼り付けキュー (核心) |
 | `src/stocker/core/clipboard_watcher.py` | Ctrl+V のブリッジ + 自動取込 (フィンガープリント dedup) |
 | `src/stocker/core/thumbnail_cache.py` | LRU + ディスクキャッシュ協調 |
@@ -188,10 +207,10 @@ PENDING バッジのオレンジ `(220,140,0,220)` と HoverPreview 背景は両
 | `src/stocker/utils/clipboard_files.py` | Explorer 互換のファイル/画像コピー (Preferred DropEffect) |
 | `src/stocker/ui/main_window.py` | UI 統括ハブ (~960 行) |
 | `src/stocker/ui/toolbar.py` | ツールバー (列数/ソート/貼り付け形式/自動取込/ホバー/アニメ再生/トレイ格納/ダークテーマ/ツリー字/ごみ箱/About) |
-| `src/stocker/ui/sidebar.py` | ツリーサイドバー + D&D ハイライト + フォルダリネーム/削除 |
+| `src/stocker/ui/sidebar.py` | ツリーサイドバー + D&D ハイライト + フォルダリネーム/削除 + フォルダ件数表示 |
 | `src/stocker/ui/theme.py` | Fusion + `QPalette` ベースのライト/ダーク切替、明示色のヘルパー (`drop_highlight_color`, `thumb_placeholder_color`) |
 | `src/stocker/ui/thumbnail_view.py` | 仮想化 IconMode QListView |
-| `src/stocker/ui/thumbnail_model.py` | QAbstractListModel + dedupe + mime |
+| `src/stocker/ui/thumbnail_model.py` | QAbstractListModel + dedupe + mime + ソート位置挿入 (`set_sort` / `_sorted_insert_position`) |
 | `src/stocker/ui/hover_preview.py` | フローティングプレビュー (静止画 + アニメ GIF/WebP via QMovie) |
 | `build/stocker.spec` | PyInstaller spec (icon 埋込・assets バンドル・15+ Qt サブモジュール除外) |
 | `build/make_portable.ps1` | `pyinstaller` → `portable.flag` → `Compress-Archive` を一括実行 |
@@ -201,9 +220,9 @@ PENDING バッジのオレンジ `(220,140,0,220)` と HoverPreview 背景は両
 `tests/` 配下、pytest-qt 使用。`conftest.py` が `src` を sys.path に注入。
 
 - `test_metadata_db.py` (9): スキーマ、CRUD、bulk、ソート、日本語ファイル名
-- `test_scanner.py` (5): 差分検出、非再帰、`.stocker` skip
+- `test_scanner.py` (6): 差分検出、非再帰、`.stocker` skip、`count_image_files` の走査範囲
 - `test_thumbnail_cache.py` (6): LRU、500 件しきい値、SHA1 命名
-- `test_thumbnail_model.py` (4): dedupe、PENDING ↔ real swap、FS watcher 競合
+- `test_thumbnail_model.py` (7): dedupe、PENDING → real リプレース、FS watcher 競合、ソート位置挿入 (name asc / mtime desc / paste 完了)
 - `test_paste_queue.py` (4): 30 件連打損失ゼロ、衝突回避
 - `test_clipboard_watcher.py` (9): フィンガープリント dedup、autocapture トグル、自己コピー抑制、起動シード
 - `test_move_service.py` (7): 同一/異ボリューム、衝突採番、進捗キャンセル、日本語

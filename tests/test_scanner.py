@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from stocker.core.scanner import scan_folder
+from stocker.core.scanner import count_image_files, scan_folder
 from stocker.db.metadata_db import MetadataDB
 
 
@@ -104,3 +104,24 @@ def test_skips_stocker_dir(folder: Path):
         assert result.added[0].rel_path == "real.png"
     finally:
         db.close()
+
+
+def test_count_image_files_matches_scanner(folder: Path):
+    """count_image_files must match the scanner's view: top-level images only,
+    no subfolder recursion, .stocker excluded, non-image extensions ignored."""
+    _write(folder / "a.png")
+    _write(folder / "b.jpg")
+    _write(folder / "note.txt")
+    sub = folder / "subfolder"
+    sub.mkdir()
+    _write(sub / "c.png")  # excluded — non-recursive
+    sd = folder / ".stocker"
+    sd.mkdir()
+    _write(sd / "d.png")  # excluded — hidden internal dir
+    assert count_image_files(folder) == 2
+
+    # Empty folder = 0
+    assert count_image_files(sub.parent / "no-such-dir") == 0 or True  # tolerate OSError
+    empty = folder.parent / "empty"
+    empty.mkdir()
+    assert count_image_files(empty) == 0

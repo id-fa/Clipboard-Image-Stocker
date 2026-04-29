@@ -17,13 +17,13 @@ def qapp():
     return QApplication.instance() or QApplication([])
 
 
-def _file(rel: str = "a.png") -> FileItem:
+def _file(rel: str = "a.png", *, mtime_ns: int | None = None) -> FileItem:
     return FileItem(
         rel_path=rel,
         name=rel.split("/")[-1],
         ext=".png",
         size_bytes=10,
-        mtime_ns=time.time_ns(),
+        mtime_ns=mtime_ns if mtime_ns is not None else time.time_ns(),
         added_at=int(time.time()),
     )
 
@@ -40,9 +40,9 @@ def test_append_dedupes_same_rel(qapp):
 
 
 def test_pending_then_completion_no_dup(qapp):
-    """Simulates the paste flow: PENDING appears first, then completion swaps it
-    in place. If FS watcher had already inserted a real row for the same file,
-    the second append is dropped, so only one row remains."""
+    """FS watcher races ahead of the paste worker: the real row lands first,
+    then completion fires for a pending row that's still around. Removing the
+    pending and dedupe-inserting the real row leaves exactly one DISK row."""
     m = ThumbnailModel()
     pending = PendingPaste(
         pid=42, qimage=QImage(4, 4, QImage.Format.Format_RGB888),
@@ -56,12 +56,11 @@ def test_pending_then_completion_no_dup(qapp):
     assert m.append_item(real) is True
     assert m.rowCount() == 2  # pending + real (transient state)
 
-    # Then paste_completed arrives; replace_pending_with_real removes the pending.
+    # Then paste_completed arrives; the pending is removed and the dedupe rejects
+    # the would-be duplicate insert, so only the real disk row survives.
     m.replace_pending_with_real(42, real)
-    # pending row was swapped in place; the appended fs-watcher row is the second one
-    rows = [m.item_at(i) for i in range(m.rowCount())]
-    rels = [it.rel_path for it in rows if it]
-    assert rels.count("p.png") == 2  # still two until we dedupe — see below
+    rels = [it.rel_path for it in (m.item_at(i) for i in range(m.rowCount())) if it]
+    assert rels == ["p.png"]
 
 
 def test_pending_completion_with_dedupe(qapp):
@@ -87,3 +86,45 @@ def test_has_rel_path(qapp):
     m.append_item(_file("a.png"))
     assert m.has_rel_path("a.png")
     assert not m.has_rel_path("b.png")
+
+
+def test_append_inserts_in_name_asc_order(qapp):
+    """append_item must respect the model's active sort, not just append."""
+    m = ThumbnailModel()
+    m.set_sort("name", "asc")
+    m.append_item(_file("c.png"))
+    m.append_item(_file("a.png"))
+    m.append_item(_file("m.png"))
+    rels = [m.item_at(i).rel_path for i in range(m.rowCount())]
+    assert rels == ["a.png", "c.png", "m.png"]
+
+
+def test_append_inserts_in_mtime_desc_order(qapp):
+    m = ThumbnailModel()
+    m.set_sort("mtime", "desc")
+    m.append_item(_file("old.png", mtime_ns=100))
+    m.append_item(_file("newer.png", mtime_ns=300))
+    m.append_item(_file("middle.png", mtime_ns=200))
+    rels = [m.item_at(i).rel_path for i in range(m.rowCount())]
+    assert rels == ["newer.png", "middle.png", "old.png"]
+
+
+def test_paste_completion_lands_in_sorted_position(qapp):
+    """Repro for the bug where new pastes always landed at the top regardless
+    of sort. With name-asc sort, a new paste of 'm.png' must land between
+    'a.png' and 'z.png', not at row 0."""
+    m = ThumbnailModel()
+    m.set_sort("name", "asc")
+    m.append_item(_file("a.png"))
+    m.append_item(_file("z.png"))
+
+    pending = PendingPaste(
+        pid=11, qimage=QImage(4, 4, QImage.Format.Format_RGB888),
+        timestamp_ns=time.time_ns(), suggested_name="m.png",
+    )
+    m.add_pending(pending)
+    real = _file("m.png")
+    m.replace_pending_with_real(11, real)
+
+    rels = [m.item_at(i).rel_path for i in range(m.rowCount())]
+    assert rels == ["a.png", "m.png", "z.png"]

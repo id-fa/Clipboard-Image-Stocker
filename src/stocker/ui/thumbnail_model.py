@@ -73,6 +73,33 @@ class ThumbnailModel(QAbstractListModel):
     def clear(self) -> None:
         self.replace([])
 
+    def set_sort(self, key: str, direction: str) -> None:
+        """Track the active sort so subsequent inserts land in their proper place."""
+        self._sort_key = key
+        self._sort_dir = direction
+
+    def _sort_value(self, item: FileItem) -> Any:
+        if self._sort_key == "mtime":
+            return item.mtime_ns
+        if self._sort_key == "added":
+            return item.added_at
+        return item.name
+
+    def _sorted_insert_position(self, item: FileItem) -> int:
+        """Linear scan for the first row that should follow ``item`` under the
+        current sort. PENDING and DISK rows participate in the same ordering."""
+        target = self._sort_value(item)
+        desc = self._sort_dir == "desc"
+        for i, existing in enumerate(self._items):
+            ev = self._sort_value(existing)
+            if desc:
+                if target > ev:
+                    return i
+            else:
+                if target < ev:
+                    return i
+        return len(self._items)
+
     def add_pending(self, pending: PendingPaste) -> None:
         item = FileItem(
             rel_path=f"<pending:{pending.pid}>",
@@ -84,22 +111,27 @@ class ThumbnailModel(QAbstractListModel):
             kind=FileKind.PENDING,
             pending_id=pending.pid,
         )
-        # Pending items go to the top so users see them appear immediately.
-        self.beginInsertRows(QModelIndex(), 0, 0)
-        self._items.insert(0, item)
+        pos = self._sorted_insert_position(item)
+        self.beginInsertRows(QModelIndex(), pos, pos)
+        self._items.insert(pos, item)
         self.endInsertRows()
 
     def replace_pending_with_real(self, pending_id: int, real: FileItem) -> bool:
+        # Drop the placeholder, then re-insert the real item at its sort-correct
+        # position. Doing it in two steps (instead of in-place swap) means a new
+        # paste no longer pins itself to the top of the grid regardless of sort.
+        pending_idx = -1
         for i, it in enumerate(self._items):
             if it.kind is FileKind.PENDING and it.pending_id == pending_id:
-                self._items[i] = real
-                idx = self.index(i)
-                self.dataChanged.emit(idx, idx)
-                return True
-        # Pending was already removed (e.g. resort or fs-watcher already added).
-        # Only append if the file isn't already represented as a disk row.
+                pending_idx = i
+                break
+        if pending_idx >= 0:
+            self.beginRemoveRows(QModelIndex(), pending_idx, pending_idx)
+            self._items.pop(pending_idx)
+            self.endRemoveRows()
+        # append_item dedupes if the FS watcher beat us to inserting the real row.
         self.append_item(real)
-        return False
+        return pending_idx >= 0
 
     def remove_pending(self, pending_id: int) -> bool:
         for i, it in enumerate(self._items):
@@ -111,16 +143,18 @@ class ThumbnailModel(QAbstractListModel):
         return False
 
     def append_item(self, item: FileItem) -> bool:
-        """Append a disk item to the end. Returns False (no-op) if a row with the
-        same rel_path is already present, preventing duplicate thumbnails when
-        the FS watcher races with paste completion."""
+        """Insert a disk item at its sort-correct position. Returns False (no-op)
+        if a row with the same rel_path is already present, preventing duplicate
+        thumbnails when the FS watcher races with paste completion. Method name
+        kept for compatibility — call sites needn't care that placement is now
+        sort-aware rather than always-at-the-end."""
         if item.kind is FileKind.DISK:
             for existing in self._items:
                 if existing.kind is FileKind.DISK and existing.rel_path == item.rel_path:
                     return False
-        n = len(self._items)
-        self.beginInsertRows(QModelIndex(), n, n)
-        self._items.append(item)
+        pos = self._sorted_insert_position(item)
+        self.beginInsertRows(QModelIndex(), pos, pos)
+        self._items.insert(pos, item)
         self.endInsertRows()
         return True
 

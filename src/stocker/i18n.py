@@ -143,6 +143,10 @@ _CATALOG: dict[str, dict[str, str]] = {
         "ja": "🗑 ごみ箱 ({n})",
         "en": "🗑 Trash ({n})",
     },
+    "sidebar.folder_with_count": {
+        "ja": "{name} ({n})",
+        "en": "{name} ({n})",
+    },
     "sidebar.trash": {"ja": "🗑 ごみ箱", "en": "🗑 Trash"},
     "sidebar.trash_tooltip": {"ja": "ごみ箱", "en": "Trash"},
     "sidebar.menu_create_subfolder": {

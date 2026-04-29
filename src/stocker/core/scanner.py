@@ -85,6 +85,16 @@ def scan_folder(root: Path, db: MetadataDB) -> ScanResult:
     return ScanResult(added=added, updated=updated, removed=removed, total=len(seen))
 
 
+def count_image_files(root: Path) -> int:
+    """Count image files at the top level of ``root`` (non-recursive).
+
+    Mirrors ``_iter_image_files``'s traversal so the returned count matches
+    what the scanner would put in the DB. Used by the sidebar to annotate
+    folder names without having to open each folder's SQLite DB.
+    """
+    return sum(1 for _ in _iter_image_files(root))
+
+
 def _iter_image_files(root: Path):
     """Iterate image files at the top level of `root` only.
 

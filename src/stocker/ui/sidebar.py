@@ -49,12 +49,21 @@ class Sidebar(QTreeView):
 
     # ---- public ----
 
-    def populate(self, workspace: Path | None, folders: list[Path], trash_count: int = 0) -> None:
+    def populate(
+        self,
+        workspace: Path | None,
+        folders: list[Path],
+        trash_count: int = 0,
+        folder_counts: dict[Path, int] | None = None,
+    ) -> None:
         self._model.removeRows(0, self._model.rowCount())
         self._highlighted_idx = QModelIndex()
         if workspace is None:
             return
-        ws_item = QStandardItem(workspace.name or str(workspace))
+        counts = folder_counts or {}
+        ws_resolved = workspace.resolve()
+        ws_name = workspace.name or str(workspace)
+        ws_item = QStandardItem(self._folder_label(ws_name, counts.get(ws_resolved, 0)))
         ws_item.setData(str(workspace), PATH_ROLE)
         ws_item.setData("workspace", KIND_ROLE)
         ws_item.setEditable(False)
@@ -64,14 +73,14 @@ class Sidebar(QTreeView):
         ws_item.setFont(ws_font)
         self._model.appendRow(ws_item)
 
-        item_map: dict[Path, QStandardItem] = {workspace.resolve(): ws_item}
+        item_map: dict[Path, QStandardItem] = {ws_resolved: ws_item}
         for f in folders:
             f_resolved = f.resolve()
-            if f_resolved == workspace.resolve():
+            if f_resolved == ws_resolved:
                 continue
             parent_path = f_resolved.parent
             parent_item = item_map.get(parent_path, ws_item)
-            it = QStandardItem(f.name)
+            it = QStandardItem(self._folder_label(f.name, counts.get(f_resolved, 0)))
             it.setData(str(f_resolved), PATH_ROLE)
             it.setData("folder", KIND_ROLE)
             it.setEditable(False)
@@ -96,8 +105,27 @@ class Sidebar(QTreeView):
                 it.setText(self._trash_label(count))
                 return
 
+    def update_folder_count(self, path: Path, count: int) -> None:
+        """Refresh just the displayed image count on a single folder node."""
+        target = str(path.resolve())
+        idx = self._find_index_by_path(target)
+        if not idx.isValid():
+            return
+        item = self._model.itemFromIndex(idx)
+        if item is None:
+            return
+        kind = item.data(KIND_ROLE)
+        if kind not in ("workspace", "folder"):
+            return
+        p = Path(target)
+        name = p.name or str(p)
+        item.setText(self._folder_label(name, count))
+
     def _trash_label(self, count: int) -> str:
         return tr("sidebar.trash_with_count", n=count) if count else tr("sidebar.trash")
+
+    def _folder_label(self, name: str, count: int) -> str:
+        return tr("sidebar.folder_with_count", name=name, n=count) if count else name
 
     def select_path(self, path: Path) -> None:
         target = str(path.resolve())

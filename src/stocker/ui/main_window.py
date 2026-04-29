@@ -40,7 +40,7 @@ from stocker.core.move_service import (
 )
 from stocker.core.paste_queue import PasteQueue
 from stocker.core.rename_service import rename_file
-from stocker.core.scanner import scan_folder
+from stocker.core.scanner import count_image_files, scan_folder
 from stocker.core.thumbnail_cache import ThumbnailCache
 from stocker.core.thumbnail_worker import ThumbnailJob, ThumbnailSignals
 from stocker.core import trash as trash_svc
@@ -132,6 +132,7 @@ class MainWindow(QMainWindow):
         # Thumbnail grid
         self._model = ThumbnailModel(self)
         self._model.set_cache_lookup(self._cache.get)
+        self._model.set_sort(cfg.sort_key, cfg.sort_dir)
         self._model.request_thumbnail.connect(self._enqueue_thumbnail)
         self._view = ThumbnailView(self)
         self._view.setModel(self._model)
@@ -450,9 +451,33 @@ class MainWindow(QMainWindow):
         ws = self._folder_manager.workspace
         folders = self._folder_manager.all_folders()
         n_trash = trash_svc.trash_count(ws) if ws else 0
-        self._sidebar.populate(ws, folders, trash_count=n_trash)
+        counts: dict[Path, int] = {}
+        for f in folders:
+            try:
+                counts[f.resolve()] = count_image_files(f)
+            except OSError as e:
+                log.warning("count failed for %s: %s", f, e)
+        self._sidebar.populate(ws, folders, trash_count=n_trash, folder_counts=counts)
         if self._active_root is not None:
             self._sidebar.select_path(self._active_root)
+
+    def _refresh_folder_count(self, folder: Path | None) -> None:
+        """Update one folder node's count badge in the sidebar.
+
+        Cheap (single non-recursive scandir) so call sites don't need to debounce.
+        Skips the trash root — trash uses ``update_trash_count`` instead.
+        """
+        if folder is None:
+            return
+        ws = self._folder_manager.workspace
+        if ws is not None and folder.resolve() == trash_svc.trash_root(ws).resolve():
+            return
+        try:
+            n = count_image_files(folder)
+        except OSError as e:
+            log.warning("count failed for %s: %s", folder, e)
+            return
+        self._sidebar.update_folder_count(folder, n)
 
     # ---- DB pool ----
 
@@ -487,6 +512,8 @@ class MainWindow(QMainWindow):
         items = db.list_files(self._cfg.sort_key, self._cfg.sort_dir)
         self._model.replace(items)
         self._sidebar.select_path(self._active_root)
+        if result.changed:
+            self._refresh_folder_count(self._active_root)
         self._fs_watcher.watch(self._active_root)
         self._cfg.last_active_root = str(self._active_root)
         save_config(self._cfg)
@@ -515,6 +542,7 @@ class MainWindow(QMainWindow):
         if result.removed:
             self._model.remove_by_rels(result.removed)
         self._cache.update_policy(db.count_files())
+        self._refresh_folder_count(root)
         self._update_status()
 
     # ---- toolbar handlers ----
@@ -528,6 +556,7 @@ class MainWindow(QMainWindow):
         self._cfg.sort_key = key
         self._cfg.sort_dir = direction
         save_config(self._cfg)
+        self._model.set_sort(key, direction)
         if self._active_root is not None:
             db = self._db(self._active_root)
             self._model.replace(db.list_files(key, direction))
@@ -681,6 +710,7 @@ class MainWindow(QMainWindow):
                 "\n".join(f"{p.name}: {err}" for p, err in result.failed[:10]),
             )
         self._cache.update_policy(db.count_files())
+        self._refresh_folder_count(self._active_root)
         self._update_status()
 
     # ---- D&D onto sidebar ----
@@ -699,6 +729,7 @@ class MainWindow(QMainWindow):
                 "\n".join(f"{p.name}: {err}" for p, err in result.failed[:10]),
             )
         self._cache.update_policy(db.count_files())
+        self._refresh_folder_count(dst_root)
         self._update_status()
 
     def _on_drop_to_sidebar(
@@ -758,6 +789,11 @@ class MainWindow(QMainWindow):
                 self, tr("dialog.copy_move_error"),
                 "\n".join(f"{ref.src_rel}: {err}" for ref, err in result.failed[:10]),
             )
+        # Refresh affected sidebar nodes — destination always; sources only on MOVE.
+        self._refresh_folder_count(dst_root)
+        if mode is MoveMode.MOVE:
+            for src in {ref.src_root for ref in refs}:
+                self._refresh_folder_count(src)
         self._update_status()
 
     def _move_refs_to_trash(self, refs: list[MoveItemRef]) -> None:
@@ -781,6 +817,7 @@ class MainWindow(QMainWindow):
             if self._active_root == src_root:
                 self._model.remove_by_rels(actually_moved_rels)
             moved_total += len(actually_moved_rels)
+            self._refresh_folder_count(src_root)
         self._sidebar.update_trash_count(trash_svc.trash_count(ws))
         if (
             self._active_root is not None
@@ -818,6 +855,7 @@ class MainWindow(QMainWindow):
         if self._active_root is not None:
             db = self._db(self._active_root)
             self._cache.update_policy(db.count_files())
+            self._refresh_folder_count(self._active_root)
         self._update_status()
 
     def _on_paste_failed(self, pid: int, err: str) -> None:
@@ -931,6 +969,7 @@ class MainWindow(QMainWindow):
             db.bulk_delete(moved_rels)
             self._model.remove_by_rels(moved_rels)
             self._sidebar.update_trash_count(trash_svc.trash_count(ws))
+            self._refresh_folder_count(self._active_root)
         self._update_status()
 
     # ---- Context menu ----
@@ -1049,6 +1088,7 @@ class MainWindow(QMainWindow):
         trash_db.bulk_delete(ok_basenames)
         self._model.remove_by_rels(ok_basenames)
         # Sync destination DBs (so restored items show up if those folders are visible)
+        restored_dst_folders: set[Path] = set()
         for r in results:
             if r.error is not None:
                 continue
@@ -1058,6 +1098,9 @@ class MainWindow(QMainWindow):
             dst_db.upsert_file(new_item)
             if self._active_root == dst_folder.resolve():
                 self._model.append_item(new_item)
+            restored_dst_folders.add(dst_folder.resolve())
+        for dst in restored_dst_folders:
+            self._refresh_folder_count(dst)
         errs = [r for r in results if r.error]
         if errs:
             QMessageBox.warning(
