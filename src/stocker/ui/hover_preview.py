@@ -69,8 +69,18 @@ class HoverPreviewWindow(QWidget):
     def is_animate(self) -> bool:
         return self._animate
 
+    def _is_main_window_active(self) -> bool:
+        # Suppress hover preview while the parent (main) window is in the
+        # background — the cursor may be passing over Stocker without the
+        # user actually attending to it.
+        parent = self.parentWidget()
+        return parent is None or parent.isActiveWindow()
+
     def schedule(self, path: Path | None) -> None:
         if not self._enabled:
+            return
+        if not self._is_main_window_active():
+            self.cancel()
             return
         if path is None or not path.exists():
             self.cancel()
@@ -106,6 +116,8 @@ class HoverPreviewWindow(QWidget):
 
     def _show_now(self) -> None:
         if self._pending_path is None:
+            return
+        if not self._is_main_window_active():
             return
         token = self._target_token + 1
         self._target_token = token
