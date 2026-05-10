@@ -26,6 +26,7 @@ class AppConfig:
     hover_preview_animate: bool = True  # play animated GIF/WebP in the hover preview
     minimize_to_tray: bool = False  # hide window to system tray on minimize
     theme: str = "light"  # "light" or "dark"
+    log_panel_enabled: bool = True  # show the bottom log row above the status bar
     trash_auto_delete_days: int = 0  # 0 = never auto-delete
     window_geometry_b64: str | None = None
     window_state_b64: str | None = None

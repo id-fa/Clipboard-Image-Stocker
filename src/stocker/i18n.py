@@ -124,6 +124,11 @@ _CATALOG: dict[str, dict[str, str]] = {
         "ja": "UI 全体をダークパレットに切り替えます。",
         "en": "Switch the entire UI to a dark palette.",
     },
+    "toolbar.log_panel": {"ja": "ログ表示", "en": "Show log"},
+    "toolbar.log_panel_tooltip": {
+        "ja": "ウィンドウ下部にログ行を表示します。クリックで履歴を展開できます。",
+        "en": "Show a log row at the bottom of the window. Click to expand history.",
+    },
     "tray.show": {"ja": "表示", "en": "Show"},
     "tray.quit": {"ja": "終了", "en": "Quit"},
     "toolbar.tree_font_label": {"ja": " ツリー字: ", "en": " Tree font: "},
@@ -312,17 +317,106 @@ _CATALOG: dict[str, dict[str, str]] = {
         "ja": "エクスプローラで開く",
         "en": "Reveal in Explorer",
     },
-    "menu.permanent_delete": {"ja": "完全に削除", "en": "Delete permanently"},
+    "menu.permanent_delete": {"ja": "Del 完全に削除", "en": "Del Delete permanently"},
     "menu.copy_image": {"ja": "画像をコピー", "en": "Copy image"},
     "menu.copy_files": {"ja": "Ctrl+C ファイルをコピー", "en": "Ctrl+C copy files"},
     "menu.rename_file": {"ja": "F2 名前を変更", "en": "F2 Rename"},
-    "menu.delete_to_trash": {"ja": "削除（ごみ箱へ）", "en": "Delete (to trash)"},
+    "menu.delete_to_trash": {"ja": "Del 削除（ごみ箱へ）", "en": "Del Delete (to trash)"},
     "menu.move_to_folder": {"ja": "別フォルダへ移動 →", "en": "Move to folder →"},
     "menu.copy_to_folder": {"ja": "別フォルダへコピー →", "en": "Copy to folder →"},
     "menu.create_subfolder": {"ja": "サブフォルダを作成", "en": "Create subfolder"},
 
     # ---- delegate ----
     "delegate.saving": {"ja": "保存中...", "en": "Saving..."},
+
+    # ---- log panel ----
+    "log.empty": {"ja": "（ログなし）", "en": "(no log)"},
+    "log.expand_tooltip": {
+        "ja": "クリックで履歴を展開／折りたたみ",
+        "en": "Click to expand / collapse history",
+    },
+    "log.workspace_root": {"ja": "(ワークスペース)", "en": "(workspace)"},
+    "log.trash": {"ja": "ごみ箱", "en": "Trash"},
+    "log.move": {
+        "ja": "{src} から {dst} に {n} 個のファイルを移動しました",
+        "en": "Moved {n} file(s) from {src} to {dst}",
+    },
+    "log.copy": {
+        "ja": "{src} から {dst} に {n} 個のファイルをコピーしました",
+        "en": "Copied {n} file(s) from {src} to {dst}",
+    },
+    "log.trash_op": {
+        "ja": "{src} から {n} 個のファイルをごみ箱へ移動しました",
+        "en": "Moved {n} file(s) from {src} to Trash",
+    },
+    "log.undo_move": {
+        "ja": "Undo: {dst} から {src} に {n} 個のファイルを戻しました",
+        "en": "Undo: moved {n} file(s) back from {dst} to {src}",
+    },
+    "log.undo_copy": {
+        "ja": "Undo: {dst} にコピーした {n} 個のファイルをごみ箱へ移動しました",
+        "en": "Undo: moved {n} copied file(s) in {dst} to Trash",
+    },
+    "log.undo_trash": {
+        "ja": "Undo: ごみ箱から {n} 個のファイルを {src} に復元しました",
+        "en": "Undo: restored {n} file(s) from Trash to {src}",
+    },
+    "log.redo_move": {
+        "ja": "Redo: {src} から {dst} に {n} 個のファイルを再度移動しました",
+        "en": "Redo: moved {n} file(s) again from {src} to {dst}",
+    },
+    "log.redo_copy": {
+        "ja": "Redo: {src} から {dst} に {n} 個のファイルを再度コピーしました",
+        "en": "Redo: copied {n} file(s) again from {src} to {dst}",
+    },
+    "log.redo_trash": {
+        "ja": "Redo: {src} の {n} 個のファイルを再度ごみ箱へ移動しました",
+        "en": "Redo: trashed {n} file(s) again from {src}",
+    },
+    "log.undo_failed": {
+        "ja": "Undo に失敗: {err}",
+        "en": "Undo failed: {err}",
+    },
+    "log.redo_failed": {
+        "ja": "Redo に失敗: {err}",
+        "en": "Redo failed: {err}",
+    },
+    "log.nothing_to_undo": {
+        "ja": "Undo するものがありません",
+        "en": "Nothing to undo",
+    },
+    "log.nothing_to_redo": {
+        "ja": "Redo するものがありません",
+        "en": "Nothing to redo",
+    },
+
+    # ---- undo dialogs ----
+    "dialog.confirm_undo_copy_title": {
+        "ja": "コピーの取り消し",
+        "en": "Undo copy",
+    },
+    "dialog.confirm_undo_copy_body": {
+        "ja": "「{dst}」にコピーした {n} 個のファイルをごみ箱へ移動します。よろしいですか？",
+        "en": "Move {n} file(s) copied to \"{dst}\" into the Trash. Continue?",
+    },
+    "dialog.undo_trash_no_workspace_title": {
+        "ja": "Undo 不可",
+        "en": "Undo unavailable",
+    },
+    "dialog.undo_trash_no_workspace_body": {
+        "ja": "ワークスペースが未設定のため、ごみ箱からの復元 Undo は実行できません。\n"
+              "手動でごみ箱から復元してください。",
+        "en": "No workspace is configured, so Undo from Trash cannot run.\n"
+              "Please restore the items manually from Trash.",
+    },
+    "dialog.undo_trash_failed_title": {
+        "ja": "ごみ箱からの復元に失敗",
+        "en": "Restore from Trash failed",
+    },
+    "dialog.undo_trash_failed_body": {
+        "ja": "一部または全部の復元に失敗しました。手動でごみ箱から復元してください。\n\n{detail}",
+        "en": "Restore failed for some or all items. Please restore them manually from Trash.\n\n{detail}",
+    },
 
     # ---- paste / move errors (caught by main_window and surfaced via QMessageBox) ----
     "paste.no_target": {

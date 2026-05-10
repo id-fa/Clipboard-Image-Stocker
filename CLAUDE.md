@@ -209,6 +209,33 @@ pwsh ./build/make_portable.ps1
 
 PENDING バッジのオレンジ `(220,140,0,220)` と HoverPreview 背景は両テーマで違和感がないので据え置き。設定 `AppConfig.theme: str` (デフォルト `"light"`) で永続化。
 
+### ログ表示行 (ステータスバー上)
+ステータスバーの上に独立行として常設のログパネル (`src/stocker/ui/log_panel.py`) を追加。`MainWindow` のセントラルウィジェットを `QSplitter` 単体から `QVBoxLayout(QSplitter + LogPanel)` 包みに差し替えて挿入する (`setCentralWidget(center)`)。
+
+- 折り畳み状態: 1 行表示で最新エントリ (`[HH:MM:SS] message`) のみ
+- 展開状態: クリック (▸/▾ シェブロン or 行本体) で `QPlainTextEdit` を高さ 160px で開き、`deque[(ts, msg)]` (`MAX_HISTORY=500`) を上から下に流し込む。アプリ終了で消える (永続化なし)
+- ON/OFF: ツールバー「ログ表示」チェックボックス (`AppConfig.log_panel_enabled`, default True)。OFF のときは `setVisible(False)` で隠すだけで `append()` は機能し続ける (再 ON で最新行から見える)
+- ログ書式は i18n カタログの `log.move` / `log.copy` / `log.trash_op` / `log.undo_*` / `log.redo_*` を使用。フォルダ表示名は `_folder_log_label(p)` がワークスペース基点で正規化し、ワークスペース基点フォルダ自体は `tr("log.workspace_root")` (= "(ワークスペース)") に置換
+
+### Undo / Redo (Ctrl+Z / Ctrl+Y)
+`src/stocker/core/undo_manager.py` の `UndoManager` がスタック深さ 1 で `UndoEntry` を保持。新規 op の `record()` は redo を必ずクリアする (標準エディタ流儀)。Undo/Redo 対象は **移動・コピー・ごみ箱削除のみ**。貼り付け・リネーム・取り込みは undo 状態を触らない (= スタックを温存)。
+
+`UndoEntry` は kind ごとに使うフィールドが異なる:
+- `MOVE` / `COPY`: `src_root`, `dst_root`, `pairs: list[(src_rel, dst_rel)]`
+- `TRASH`: `workspace`, `trashed_basenames` (undo 方向用) または `trash_sources: list[(file_abs, src_root)]` (redo 方向用)
+
+undo/redo 実行時は `_perform_move_silently()` で perform_move + DB/モデル更新をプログレスダイアログ無しで回す (元の操作で既にダイアログを見ているため)。実行が成功した場合のみ inverse の entry を反対側に push する。
+
+操作別の Undo の中身:
+- **MOVE undo**: `dst_root/dst_rel` のファイルを `src_root` へ MOVE で戻す。avoid_collision で着地名が変わる可能性があるので `new_item.rel_path` を redo 用に保持
+- **COPY undo**: ユーザー確認ダイアログ (`dialog.confirm_undo_copy_*`) を経て `dst_root/dst_rel` の**コピー側のみ**を `trash.move_to_trash` で削除。元ファイルは `src_root` に残るので redo は単純に再 COPY
+- **TRASH undo**: `trash.restore(workspace, basenames)` で復元。`origin_folder_rel` から復元先を再構築 → 各 dst の DB 再 upsert + (active なら) モデル追加 + サイドバー件数更新。redo 用に `(restored_abs, origin_folder)` を保持
+- **TRASH undo 失敗時のフォールバック**: ワークスペース未設定なら `dialog.undo_trash_no_workspace_*` でユーザーに「手動で復元してください」と案内。一部失敗時は `dialog.undo_trash_failed_*` で詳細を出す
+
+複数 src フォルダにまたがる移動・コピーは単一 entry に符号化できないので `_undo_mgr.clear()` で undo を放棄する (ログだけは「(multiple) → B」で出る)。トラッシュは origin が個別記録されるので multi-source でも 1 entry にまとめられる。
+
+ショートカット (`QShortcut(QKeySequence.StandardKey.Undo/Redo, self)`) はウィンドウスコープ。リネーム入力欄など子ウィジェット内では Qt が自前の Undo/Redo を優先するので衝突しない。
+
 ### About ダイアログ
 ツールバー右端「バージョン情報...」(EN: "About...") から `QMessageBox.about()`。表示内容は `app_paths.py` の `APP_VERSION`, `APP_AUTHOR`, `APP_HOMEPAGE` を `tr("about.body", ...)` の HTML テンプレートに差し込む。URL は `<a href>` でクリック → ブラウザ起動。`pyproject.toml` の `version` と `APP_VERSION` は揃える運用 (`make_portable.ps1` が pyproject から zip ファイル名を作るため)。
 
@@ -228,6 +255,7 @@ PENDING バッジのオレンジ `(220,140,0,220)` と HoverPreview 背景は両
 | `src/stocker/core/clipboard_watcher.py` | Ctrl+V のブリッジ + 自動取込 (フィンガープリント dedup) |
 | `src/stocker/core/thumbnail_cache.py` | LRU + ディスクキャッシュ協調 |
 | `src/stocker/core/move_service.py` | フォルダ間移動/コピー (跨 DB トランザクション) |
+| `src/stocker/core/undo_manager.py` | 1 世代のみの Undo/Redo コンテナ (移動・コピー・ごみ箱削除) |
 | `src/stocker/core/rename_service.py` | ファイル単体リネーム (ディスク + DB を整合) |
 | `src/stocker/core/trash.py` | ごみ箱 + 復元 + auto_purge + `rewrite_origin_paths` (フォルダリネーム追従) |
 | `src/stocker/utils/clipboard_files.py` | Explorer 互換のファイル/画像コピー (Preferred DropEffect) |
@@ -238,6 +266,7 @@ PENDING バッジのオレンジ `(220,140,0,220)` と HoverPreview 背景は両
 | `src/stocker/ui/thumbnail_view.py` | 仮想化 IconMode QListView |
 | `src/stocker/ui/thumbnail_model.py` | QAbstractListModel + dedupe + mime + ソート位置挿入 (`set_sort` / `_sorted_insert_position`) + 長方形セル (`set_cell_size`) + ファイル名フィルタ proxy (`ThumbnailFilterProxy`) |
 | `src/stocker/ui/hover_preview.py` | フローティングプレビュー (静止画 + アニメ GIF/WebP via QMovie) |
+| `src/stocker/ui/log_panel.py` | ステータスバー上のログ行 (1 行表示 / クリックで履歴展開、メモリのみ) |
 | `build/stocker.spec` | PyInstaller spec (icon 埋込・assets バンドル・15+ Qt サブモジュール除外) |
 | `build/make_portable.ps1` | `pyinstaller` → `portable.flag` → `Compress-Archive` を一括実行 |
 
@@ -256,6 +285,7 @@ PENDING バッジのオレンジ `(220,140,0,220)` と HoverPreview 背景は両
 - `test_folder_manager.py` (14): workspace 設定、subfolder 作成、hidden 除外、リネーム (workspace 拒否/不正名/衝突/外部拒否)、削除 (basic/workspace 拒否/外部拒否/非存在)
 - `test_clipboard_files.py` (5): URL roundtrip、DropEffect バイト列確認、画像コピー
 - `test_i18n.py` (8): ja/en 切替、format kwargs、未知キーフォールバック、`detect_language()` ホスト非依存
+- `test_undo_manager.py` (7): 初期空、record で redo クリア、roundtrip、新 op で redo クリア、1 世代のみ、clear、count フィールド整合
 
 ## 既知の癖・注意点
 
@@ -314,6 +344,7 @@ Twitter のペーストハンドラは `e.clipboardData.files` のみを見る�
 - `hover_preview_animate` (bool, default True) — 拡大プレビューでアニメ GIF/WebP を再生するか
 - `minimize_to_tray` (bool, default False) — 最小化時にウィンドウをタスクトレイに格納する (× ボタンは通常終了)
 - `theme` ("light"|"dark", default "light") — Fusion + `QPalette` でライト/ダーク切替
+- `log_panel_enabled` (bool, default True) — ステータスバー上のログ行を表示するか
 - `trash_auto_delete_days` (0=無効)
 - 起動時に `auto_purge(workspace, trash_auto_delete_days)` を実行
 

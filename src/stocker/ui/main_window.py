@@ -21,6 +21,8 @@ from PySide6.QtWidgets import (
     QSplitter,
     QStatusBar,
     QSystemTrayIcon,
+    QVBoxLayout,
+    QWidget,
 )
 
 from stocker.app_paths import APP_AUTHOR, APP_HOMEPAGE, APP_NAME, APP_VERSION, HIDDEN_DIR_NAMES
@@ -44,8 +46,10 @@ from stocker.core.scanner import count_image_files, scan_folder
 from stocker.core.thumbnail_cache import ThumbnailCache
 from stocker.core.thumbnail_worker import ThumbnailJob, ThumbnailSignals
 from stocker.core import trash as trash_svc
+from stocker.core.undo_manager import UndoEntry, UndoKind, UndoManager
 from stocker.db.metadata_db import MetadataDB
 from stocker.ui.hover_preview import HoverPreviewWindow
+from stocker.ui.log_panel import LogPanel
 from stocker.ui.sidebar import Sidebar
 from stocker.ui.thumbnail_delegate import ThumbnailDelegate
 from stocker.ui.theme import apply_theme
@@ -96,6 +100,7 @@ class MainWindow(QMainWindow):
         self._toolbar.set_minimize_to_tray(cfg.minimize_to_tray and tray_available)
         self._toolbar.set_minimize_to_tray_available(tray_available)
         self._toolbar.set_dark_theme(cfg.theme == "dark")
+        self._toolbar.set_log_panel_enabled(cfg.log_panel_enabled)
         self._toolbar.set_font_size(cfg.sidebar_font_size)
         self._toolbar.set_trash_days(cfg.trash_auto_delete_days)
         self._toolbar.blockSignals(False)
@@ -111,14 +116,24 @@ class MainWindow(QMainWindow):
         self._toolbar.hover_preview_animate_changed.connect(self._on_hover_preview_animate_changed)
         self._toolbar.minimize_to_tray_changed.connect(self._on_minimize_to_tray_changed)
         self._toolbar.dark_theme_changed.connect(self._on_dark_theme_changed)
+        self._toolbar.log_panel_enabled_changed.connect(self._on_log_panel_enabled_changed)
         self._toolbar.sidebar_font_size_changed.connect(self._on_sidebar_font_changed)
         self._toolbar.trash_days_changed.connect(self._on_trash_days_changed)
         self._toolbar.empty_trash_requested.connect(self._on_empty_trash)
         self._toolbar.about_requested.connect(self._on_about)
 
-        # Center: splitter
-        self._splitter = QSplitter(Qt.Orientation.Horizontal, self)
-        self.setCentralWidget(self._splitter)
+        # Center: splitter wrapped in a vertical layout so we can append a
+        # log panel below it (between the grid and the QStatusBar).
+        center = QWidget(self)
+        center_layout = QVBoxLayout(center)
+        center_layout.setContentsMargins(0, 0, 0, 0)
+        center_layout.setSpacing(0)
+        self._splitter = QSplitter(Qt.Orientation.Horizontal, center)
+        center_layout.addWidget(self._splitter, 1)
+        self._log_panel = LogPanel(center)
+        self._log_panel.setVisible(cfg.log_panel_enabled)
+        center_layout.addWidget(self._log_panel)
+        self.setCentralWidget(center)
 
         # Sidebar
         self._sidebar = Sidebar(self)
@@ -184,6 +199,13 @@ class MainWindow(QMainWindow):
         self._delete_shortcut.activated.connect(self._on_delete_shortcut)
         self._find_shortcut = QShortcut(QKeySequence.StandardKey.Find, self)
         self._find_shortcut.activated.connect(self._toolbar.focus_filter)
+        self._undo_shortcut = QShortcut(QKeySequence.StandardKey.Undo, self)
+        self._undo_shortcut.activated.connect(self._on_undo_shortcut)
+        self._redo_shortcut = QShortcut(QKeySequence.StandardKey.Redo, self)
+        self._redo_shortcut.activated.connect(self._on_redo_shortcut)
+
+        # Undo/Redo state — 1 generation each side, cleared by any new op.
+        self._undo_mgr = UndoManager()
 
         # Status bar
         self.setStatusBar(QStatusBar(self))
@@ -628,6 +650,11 @@ class MainWindow(QMainWindow):
         self._view.viewport().update()
         self._sidebar.viewport().update()
 
+    def _on_log_panel_enabled_changed(self, enabled: bool) -> None:
+        self._cfg.log_panel_enabled = bool(enabled)
+        save_config(self._cfg)
+        self._log_panel.setVisible(bool(enabled))
+
     def _on_tray_activated(self, reason: QSystemTrayIcon.ActivationReason) -> None:
         # Single-click on Windows = Trigger; double-click = DoubleClick.
         # Both restore — the context menu handles "Show" / "Quit" separately.
@@ -815,6 +842,7 @@ class MainWindow(QMainWindow):
             for src in {ref.src_root for ref in refs}:
                 self._refresh_folder_count(src)
         self._update_status()
+        self._record_move_or_copy_undo(result.moved, dst_root, mode)
 
     def _move_refs_to_trash(self, refs: list[MoveItemRef]) -> None:
         ws = self._folder_manager.workspace
@@ -824,6 +852,8 @@ class MainWindow(QMainWindow):
         for r in refs:
             per_src.setdefault(r.src_root.resolve(), []).append(r)
         moved_total = 0
+        all_trashed: list[trash_svc.TrashedItem] = []
+        src_roots_seen: list[Path] = []
         for src_root, group in per_src.items():
             src_db = self._db(src_root)
             pairs = [(from_rel(src_root, r.src_rel), src_root) for r in group]
@@ -837,6 +867,9 @@ class MainWindow(QMainWindow):
             if self._active_root == src_root:
                 self._model.remove_by_rels(actually_moved_rels)
             moved_total += len(actually_moved_rels)
+            all_trashed.extend(moved)
+            if moved:
+                src_roots_seen.append(src_root)
             self._refresh_folder_count(src_root)
         self._sidebar.update_trash_count(trash_svc.trash_count(ws))
         if (
@@ -846,6 +879,7 @@ class MainWindow(QMainWindow):
             self._activate_folder(self._active_root)
         self._update_status()
         log.info("trashed %d items", moved_total)
+        self._record_trash_undo(all_trashed, src_roots_seen)
 
     # ---- Clipboard paste ----
 
@@ -990,6 +1024,7 @@ class MainWindow(QMainWindow):
             self._model.remove_by_rels(moved_rels)
             self._sidebar.update_trash_count(trash_svc.trash_count(ws))
             self._refresh_folder_count(self._active_root)
+            self._record_trash_undo(moved, [self._active_root])
         self._update_status()
 
     # ---- Context menu ----
@@ -1181,6 +1216,423 @@ class MainWindow(QMainWindow):
                 policy=policy,
             )
         )
+
+    # ---- Log + Undo/Redo ----
+
+    def _folder_log_label(self, p: Path) -> str:
+        """Display label for a folder in log strings (workspace-relative)."""
+        ws = self._folder_manager.workspace
+        if ws is None:
+            return p.name or str(p)
+        try:
+            rel = p.resolve().relative_to(ws.resolve())
+        except ValueError:
+            return p.name or str(p)
+        rel_str = str(rel).replace("\\", "/")
+        if rel_str in ("", "."):
+            # The workspace root itself has no name in a "FolderA → FolderB"
+            # sentence; surface it as "(workspace)" instead.
+            return tr("log.workspace_root")
+        return rel_str
+
+    def _log(self, message: str) -> None:
+        """Append a one-line entry to the log panel."""
+        if not message:
+            return
+        self._log_panel.append(message)
+
+    def _record_move_or_copy_undo(
+        self,
+        moved: list[tuple[MoveItemRef, FileItem]],
+        dst_root: Path,
+        mode: MoveMode,
+    ) -> None:
+        """Record an undo entry for a successful move/copy and log it.
+
+        Skips recording undo (but still logs) when sources span multiple
+        managed folders — reversing a multi-source op needs per-source dst
+        bookkeeping that the single-entry model can't express cleanly.
+        """
+        if not moved:
+            return
+        src_roots = {ref.src_root.resolve() for ref, _ in moved}
+        dst_resolved = dst_root.resolve()
+        # Pick a label for the source side (use the only src or a fallback).
+        if len(src_roots) == 1:
+            src_root_single = next(iter(src_roots))
+            src_label = self._folder_log_label(src_root_single)
+        else:
+            src_root_single = None
+            src_label = "(multiple)"
+        dst_label = self._folder_log_label(dst_root)
+        n = len(moved)
+
+        key = "log.copy" if mode is MoveMode.COPY else "log.move"
+        self._log(tr(key, src=src_label, dst=dst_label, n=n))
+
+        if src_root_single is None:
+            # Cannot encode multi-source op as a single undo entry; drop history.
+            self._undo_mgr.clear()
+            return
+        pairs = [(ref.src_rel, new_item.rel_path) for ref, new_item in moved]
+        self._undo_mgr.record(UndoEntry(
+            kind=UndoKind.COPY if mode is MoveMode.COPY else UndoKind.MOVE,
+            src_label=src_label, dst_label=dst_label,
+            src_root=src_root_single, dst_root=dst_resolved,
+            pairs=pairs,
+        ))
+
+    def _record_trash_undo(
+        self,
+        trashed: list[trash_svc.TrashedItem],
+        src_roots_seen: list[Path],
+    ) -> None:
+        """Record an undo entry for a successful trash op and log it."""
+        if not trashed:
+            return
+        ws = self._folder_manager.workspace
+        if ws is None:
+            return
+        unique_src = {p.resolve() for p in src_roots_seen}
+        if len(unique_src) == 1:
+            src_label = self._folder_log_label(next(iter(unique_src)))
+        elif len(unique_src) > 1:
+            src_label = "(multiple)"
+        else:
+            src_label = ""
+        n = len(trashed)
+        self._log(tr("log.trash_op", src=src_label, n=n))
+
+        self._undo_mgr.record(UndoEntry(
+            kind=UndoKind.TRASH,
+            src_label=src_label, dst_label=tr("log.trash"),
+            workspace=ws.resolve(),
+            trashed_basenames=[m.trashed_abs.name for m in trashed],
+        ))
+
+    def _on_undo_shortcut(self) -> None:
+        entry = self._undo_mgr.peek_undo()
+        if entry is None:
+            self._log(tr("log.nothing_to_undo"))
+            return
+        try:
+            if entry.kind is UndoKind.MOVE:
+                redo_entry = self._undo_move(entry)
+            elif entry.kind is UndoKind.COPY:
+                redo_entry = self._undo_copy(entry)
+            else:
+                redo_entry = self._undo_trash(entry)
+        except Exception as e:  # noqa: BLE001
+            log.exception("undo failed")
+            self._log(tr("log.undo_failed", err=e))
+            return
+        if redo_entry is None:
+            return
+        # Move the entry from undo → redo only on success.
+        self._undo_mgr.take_undo()
+        self._undo_mgr.push_redo(redo_entry)
+
+    def _on_redo_shortcut(self) -> None:
+        entry = self._undo_mgr.peek_redo()
+        if entry is None:
+            self._log(tr("log.nothing_to_redo"))
+            return
+        try:
+            if entry.kind is UndoKind.MOVE:
+                undo_entry = self._redo_move(entry)
+            elif entry.kind is UndoKind.COPY:
+                undo_entry = self._redo_copy(entry)
+            else:
+                undo_entry = self._redo_trash(entry)
+        except Exception as e:  # noqa: BLE001
+            log.exception("redo failed")
+            self._log(tr("log.redo_failed", err=e))
+            return
+        if undo_entry is None:
+            return
+        self._undo_mgr.take_redo()
+        self._undo_mgr.push_undo(undo_entry)
+
+    # ---- inverse operations ----
+
+    def _undo_move(self, entry: UndoEntry) -> UndoEntry | None:
+        """Move files at dst_root back to src_root. Returns redo entry."""
+        assert entry.src_root is not None and entry.dst_root is not None
+        refs = [MoveItemRef(src_root=entry.dst_root, src_rel=dst_rel)
+                for _, dst_rel in entry.pairs]
+        result = self._perform_move_silently(refs, entry.src_root, MoveMode.MOVE)
+        n = len(result.moved)
+        if n == 0:
+            return None
+        # Build redo entry: when "redone", we want to move the files (now back
+        # at src_root) forward to dst_root again. Track each file's current rel
+        # under src_root so the redo refs are accurate.
+        redo_pairs: list[tuple[str, str]] = []
+        for (_orig_src_rel, _orig_dst_rel), (_ref, new_item) in zip(entry.pairs, result.moved):
+            redo_pairs.append((new_item.rel_path, _orig_dst_rel))
+        self._log(tr(
+            "log.undo_move",
+            src=entry.src_label, dst=entry.dst_label, n=n,
+        ))
+        return UndoEntry(
+            kind=UndoKind.MOVE,
+            src_label=entry.src_label, dst_label=entry.dst_label,
+            src_root=entry.src_root, dst_root=entry.dst_root,
+            pairs=redo_pairs,
+        )
+
+    def _redo_move(self, entry: UndoEntry) -> UndoEntry | None:
+        """Re-apply a move from src_root to dst_root. Returns undo entry."""
+        assert entry.src_root is not None and entry.dst_root is not None
+        refs = [MoveItemRef(src_root=entry.src_root, src_rel=src_rel)
+                for src_rel, _ in entry.pairs]
+        result = self._perform_move_silently(refs, entry.dst_root, MoveMode.MOVE)
+        n = len(result.moved)
+        if n == 0:
+            return None
+        new_pairs: list[tuple[str, str]] = []
+        for (orig_src_rel, _), (_ref, new_item) in zip(entry.pairs, result.moved):
+            new_pairs.append((orig_src_rel, new_item.rel_path))
+        self._log(tr(
+            "log.redo_move",
+            src=entry.src_label, dst=entry.dst_label, n=n,
+        ))
+        return UndoEntry(
+            kind=UndoKind.MOVE,
+            src_label=entry.src_label, dst_label=entry.dst_label,
+            src_root=entry.src_root, dst_root=entry.dst_root,
+            pairs=new_pairs,
+        )
+
+    def _undo_copy(self, entry: UndoEntry) -> UndoEntry | None:
+        """Trash the copies at dst_root after user confirmation. Returns redo entry."""
+        assert entry.src_root is not None and entry.dst_root is not None
+        ws = self._folder_manager.workspace
+        if ws is None:
+            QMessageBox.warning(
+                self, tr("dialog.cannot_delete"),
+                tr("dialog.no_workspace_no_trash"),
+            )
+            return None
+        n = len(entry.pairs)
+        if (
+            QMessageBox.question(
+                self, tr("dialog.confirm_undo_copy_title"),
+                tr("dialog.confirm_undo_copy_body", dst=entry.dst_label, n=n),
+            )
+            != QMessageBox.StandardButton.Yes
+        ):
+            return None
+        dst_db = self._db(entry.dst_root)
+        pairs_to_trash = [
+            (from_rel(entry.dst_root, dst_rel), entry.dst_root)
+            for _, dst_rel in entry.pairs
+        ]
+        moved = trash_svc.move_to_trash(ws, pairs_to_trash)
+        moved_origin_paths = {m.src_abs for m in moved}
+        trashed_dst_rels = [
+            dst_rel for (_, dst_rel), (file_abs, _) in zip(entry.pairs, pairs_to_trash)
+            if file_abs in moved_origin_paths
+        ]
+        dst_db.bulk_delete(trashed_dst_rels)
+        if self._active_root == entry.dst_root:
+            self._model.remove_by_rels(trashed_dst_rels)
+        self._sidebar.update_trash_count(trash_svc.trash_count(ws))
+        self._refresh_folder_count(entry.dst_root)
+        if (
+            self._active_root is not None
+            and self._active_root == trash_svc.trash_root(ws)
+        ):
+            self._activate_folder(self._active_root)
+        n_ok = len(trashed_dst_rels)
+        if n_ok == 0:
+            return None
+        self._log(tr(
+            "log.undo_copy", dst=entry.dst_label, n=n_ok,
+        ))
+        # Redo: re-copy the same originals (still present at src_root) to dst_root.
+        kept_pairs = [
+            (src_rel, dst_rel) for (src_rel, dst_rel), (file_abs, _)
+            in zip(entry.pairs, pairs_to_trash)
+            if file_abs in moved_origin_paths
+        ]
+        return UndoEntry(
+            kind=UndoKind.COPY,
+            src_label=entry.src_label, dst_label=entry.dst_label,
+            src_root=entry.src_root, dst_root=entry.dst_root,
+            pairs=kept_pairs,
+        )
+
+    def _redo_copy(self, entry: UndoEntry) -> UndoEntry | None:
+        """Re-execute a copy from src_root to dst_root. Returns undo entry."""
+        assert entry.src_root is not None and entry.dst_root is not None
+        refs = [MoveItemRef(src_root=entry.src_root, src_rel=src_rel)
+                for src_rel, _ in entry.pairs]
+        result = self._perform_move_silently(refs, entry.dst_root, MoveMode.COPY)
+        n = len(result.moved)
+        if n == 0:
+            return None
+        new_pairs: list[tuple[str, str]] = []
+        for (orig_src_rel, _), (_ref, new_item) in zip(entry.pairs, result.moved):
+            new_pairs.append((orig_src_rel, new_item.rel_path))
+        self._log(tr(
+            "log.redo_copy",
+            src=entry.src_label, dst=entry.dst_label, n=n,
+        ))
+        return UndoEntry(
+            kind=UndoKind.COPY,
+            src_label=entry.src_label, dst_label=entry.dst_label,
+            src_root=entry.src_root, dst_root=entry.dst_root,
+            pairs=new_pairs,
+        )
+
+    def _undo_trash(self, entry: UndoEntry) -> UndoEntry | None:
+        """Restore files from trash to their original folders. Returns redo entry."""
+        ws = entry.workspace
+        if ws is None or not ws.exists():
+            QMessageBox.warning(
+                self, tr("dialog.undo_trash_no_workspace_title"),
+                tr("dialog.undo_trash_no_workspace_body"),
+            )
+            return None
+        basenames = list(entry.trashed_basenames)
+        if not basenames:
+            return None
+        results = trash_svc.restore(ws, basenames)
+        ok_results = [r for r in results if r.error is None]
+        err_results = [r for r in results if r.error is not None]
+        if not ok_results:
+            detail = "\n".join(f"{r.restored_abs.name}: {r.error}" for r in err_results[:10])
+            QMessageBox.warning(
+                self, tr("dialog.undo_trash_failed_title"),
+                tr("dialog.undo_trash_failed_body", detail=detail),
+            )
+            return None
+
+        # Mirror restore side-effects from _on_restore_selected.
+        troot = trash_svc.trash_root(ws)
+        if self._active_root is not None and self._active_root == troot:
+            trash_db = self._db(self._active_root)
+            ok_basenames = [b for b, r in zip(basenames, results) if r.error is None]
+            trash_db.bulk_delete(ok_basenames)
+            self._model.remove_by_rels(ok_basenames)
+
+        restored_dst_folders: set[Path] = set()
+        redo_sources: list[tuple[Path, Path]] = []
+        for r in ok_results:
+            dst_folder = (ws / r.origin_folder_rel) if r.origin_folder_rel else ws
+            dst_db = self._db(dst_folder)
+            new_item = FileItem.from_path(dst_folder, r.restored_abs)
+            dst_db.upsert_file(new_item)
+            if self._active_root == dst_folder.resolve():
+                self._model.append_item(new_item)
+            restored_dst_folders.add(dst_folder.resolve())
+            redo_sources.append((r.restored_abs, dst_folder.resolve()))
+        for dst in restored_dst_folders:
+            self._refresh_folder_count(dst)
+        self._sidebar.update_trash_count(trash_svc.trash_count(ws))
+        self._update_status()
+
+        if err_results:
+            detail = "\n".join(f"{r.restored_abs.name}: {r.error}" for r in err_results[:10])
+            QMessageBox.warning(
+                self, tr("dialog.undo_trash_failed_title"),
+                tr("dialog.undo_trash_failed_body", detail=detail),
+            )
+
+        n = len(ok_results)
+        self._log(tr("log.undo_trash", src=entry.src_label, n=n))
+        # Redo trash entry holds the current paths to be re-trashed.
+        return UndoEntry(
+            kind=UndoKind.TRASH,
+            src_label=entry.src_label, dst_label=entry.dst_label,
+            workspace=ws,
+            trash_sources=redo_sources,
+        )
+
+    def _redo_trash(self, entry: UndoEntry) -> UndoEntry | None:
+        """Re-trash the files that a prior undo restored. Returns undo entry."""
+        ws = entry.workspace
+        if ws is None or not entry.trash_sources:
+            return None
+        moved = trash_svc.move_to_trash(ws, entry.trash_sources)
+        if not moved:
+            return None
+        moved_origin_paths = {m.src_abs for m in moved}
+        # Update each src DB (delete the rel) and mirror in the active model.
+        per_src: dict[Path, list[tuple[Path, Path]]] = {}
+        for file_abs, src_root in entry.trash_sources:
+            per_src.setdefault(src_root, []).append((file_abs, src_root))
+        src_roots_seen: list[Path] = []
+        for src_root, items in per_src.items():
+            src_db = self._db(src_root)
+            rels_to_delete: list[str] = []
+            for file_abs, _ in items:
+                if file_abs not in moved_origin_paths:
+                    continue
+                try:
+                    rel = normalize_rel(file_abs.relative_to(src_root))
+                except ValueError:
+                    continue
+                rels_to_delete.append(rel)
+            if rels_to_delete:
+                src_db.bulk_delete(rels_to_delete)
+                if self._active_root == src_root.resolve():
+                    self._model.remove_by_rels(rels_to_delete)
+                src_roots_seen.append(src_root)
+                self._refresh_folder_count(src_root)
+        self._sidebar.update_trash_count(trash_svc.trash_count(ws))
+        if (
+            self._active_root is not None
+            and self._active_root == trash_svc.trash_root(ws)
+        ):
+            self._activate_folder(self._active_root)
+        self._update_status()
+        n = len(moved)
+        self._log(tr("log.redo_trash", src=entry.src_label, n=n))
+        return UndoEntry(
+            kind=UndoKind.TRASH,
+            src_label=entry.src_label, dst_label=entry.dst_label,
+            workspace=ws,
+            trashed_basenames=[m.trashed_abs.name for m in moved],
+        )
+
+    def _perform_move_silently(
+        self,
+        refs: list[MoveItemRef],
+        dst_root: Path,
+        mode: MoveMode,
+    ) -> MoveResult:
+        """Run perform_move + update DBs/model, without a progress dialog.
+
+        Used by undo/redo paths where the user already saw the original op.
+        Mirrors the bookkeeping in _on_drop_to_sidebar but without the dialog
+        and without recording another undo entry.
+        """
+        for r in {ref.src_root for ref in refs}:
+            self._db(r)
+        self._db(dst_root)
+        result = perform_move(
+            refs, dst_root, db_for=self._db, cache=self._cache, mode=mode,
+        )
+        if self._active_root is not None:
+            active = self._active_root.resolve()
+            if mode is MoveMode.MOVE:
+                removed_rels = [
+                    ref.src_rel for ref, _ in result.moved
+                    if ref.src_root.resolve() == active
+                ]
+                if removed_rels:
+                    self._model.remove_by_rels(removed_rels)
+            if dst_root.resolve() == active:
+                for _, new_item in result.moved:
+                    self._model.append_item(new_item)
+        self._refresh_folder_count(dst_root)
+        if mode is MoveMode.MOVE:
+            for src in {ref.src_root for ref in refs}:
+                self._refresh_folder_count(src)
+        self._update_status()
+        return result
 
     def changeEvent(self, e) -> None:
         # Hide-to-tray trigger. We watch WindowStateChange and divert minimize

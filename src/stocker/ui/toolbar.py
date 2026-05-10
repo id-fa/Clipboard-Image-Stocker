@@ -30,6 +30,7 @@ class StockerToolbar(QToolBar):
     hover_preview_animate_changed = Signal(bool)
     minimize_to_tray_changed = Signal(bool)
     dark_theme_changed = Signal(bool)
+    log_panel_enabled_changed = Signal(bool)
     sidebar_font_size_changed = Signal(int)
     trash_days_changed = Signal(int)
     empty_trash_requested = Signal()
@@ -126,6 +127,12 @@ class StockerToolbar(QToolBar):
         self.addWidget(self._dark_theme)
         self._dark_theme.toggled.connect(self.dark_theme_changed.emit)
 
+        self._log_panel = QCheckBox(tr("toolbar.log_panel"), self)
+        self._log_panel.setToolTip(tr("toolbar.log_panel_tooltip"))
+        self._log_panel.setChecked(True)
+        self.addWidget(self._log_panel)
+        self._log_panel.toggled.connect(self.log_panel_enabled_changed.emit)
+
         self.addSeparator()
         self.addWidget(QLabel(tr("toolbar.tree_font_label")))
         self._font_spin = QSpinBox(self)
@@ -196,6 +203,9 @@ class StockerToolbar(QToolBar):
 
     def set_dark_theme(self, enabled: bool) -> None:
         self._dark_theme.setChecked(bool(enabled))
+
+    def set_log_panel_enabled(self, enabled: bool) -> None:
+        self._log_panel.setChecked(bool(enabled))
 
     def set_minimize_to_tray_available(self, available: bool) -> None:
         """Disable the toggle (with explanatory tooltip) when no tray is present."""
