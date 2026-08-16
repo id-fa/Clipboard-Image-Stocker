@@ -15,7 +15,7 @@
 # 開発起動
 ./.venv/Scripts/python.exe -m stocker
 
-# テスト (87 件)
+# テスト (149 件)
 ./.venv/Scripts/python.exe -m pytest tests/
 
 # ポータブル zip ビルド (PyInstaller → portable.flag → Compress-Archive を一括)
@@ -51,7 +51,7 @@ pwsh ./build/make_portable.ps1
 - `cache.get()` は memory miss → disk → 双方 miss なら `request_thumbnail` シグナル経由でワーカー投入
 
 ### サムネイルセルのアスペクト比
-ツールバーのコンボボックスで `1:1 | 4:3 | 16:9 | 3:4 | 9:16` から選択。`ThumbnailView._aspect_w/h` を保持し、`_apply_size()` で `cell_w` を columns/viewport から決め、`thumb_h = round(thumb_w * ah / aw)` を `model.set_cell_size(w, h)` に渡す。`ThumbnailModel` は従来の正方形固定 `_target_size` から `_thumb_w / _thumb_h` の長方形対応に拡張、`SizeHintRole` も `QSize(thumb_w + 16, thumb_h + 32)` を返す。
+ツールバーのコンボボックスで `1:1 | 4:3 | 16:9 | 3:4 | 9:16` から選択。`ThumbnailView._aspect_w/h` を保持し、`_apply_size()` で `thumb_w` を columns/viewport から決め、`thumb_h = round(thumb_w * ah / aw)` を `model.set_cell_size(w, h)` に渡す。`ThumbnailModel` は従来の正方形固定 `_target_size` から `_thumb_w / _thumb_h` の長方形対応に拡張、`SizeHintRole` も `QSize(thumb_w + 16, thumb_h + 32)` を返す。
 
 サムネキャッシュキーの `target_size` は `max(thumb_w, thumb_h)` で派生 (= 長辺)。これにより:
 - 横長アスペクト同士 (1:1 ↔ 16:9 ↔ 4:3) は同じ longest-side でキャッシュを使い回せる
@@ -60,6 +60,27 @@ pwsh ./build/make_portable.ps1
 `set_target_size(size)` は後方互換のシムとして `set_cell_size(size, size)` に委譲。設定 `AppConfig.thumbnail_aspect: str` (デフォルト `"1:1"`)。
 
 選択した比率と画像本来の比率が一致する場合のみセル全体が埋まる (Delegate 側は従来どおり `KeepAspectRatio` で描画)。混在時は元の比率を保ったまま余白が出る。
+
+### 列数とセルサイズの計算 (`ThumbnailView._apply_size`)
+
+指定した列数どおりに並べるため、**明示的な `setGridSize()`** でレイアウトを固定する。sizeHint + spacing 任せにすると Qt が自前で列数を決めてしまい、10 列指定なのに 11 個並ぶ、といったズレが出る。
+
+Qt の折り返し規則 (グリッド有効時、実測):
+
+```
+1 行に入る個数 = (viewport_w - 1) // grid_w      # spacing は無関係
+```
+
+`- 1` は「右端にちょうど届くセルは折り返す」ため。したがって逆算は `stride_w = (viewport_w - 1) // columns` になる (下限は `MIN_THUMB + ITEM_MARGIN_W + CELL_GAP` = 68px。これを下回る幅では要求列数を満たせず自動的に列が減る)。
+
+サイズの内訳:
+- `stride_w` = グリッド幅 (セル間の刻み)
+- `thumb_w = stride_w - ITEM_MARGIN_W(16) - CELL_GAP(4)`、`thumb_h = round(thumb_w * ah / aw)`
+- 各アイテムの `SizeHintRole` は `QSize(thumb_w + 16, thumb_h + 32)` (= `stride - CELL_GAP`) なので、`CELL_GAP` の分だけセル同士が離れる
+
+**垂直スクロールバーは常に幅を確保する** (`_layout_width()`)。バーの出現/消滅で viewport 幅が変わると stride が 1px ずれて列が 1 つ増減し、さらにセルサイズ変化がバーの出現条件を変えて発振する。隠れている間もバー幅を差し引くことで、どちらの状態でも同じ実効幅になり安定する。
+
+回帰テストは `tests/test_thumbnail_view.py`。
 
 ### ファイル名フィルタ (インクリメンタルサーチ)
 ツールバーの「絞り込み」`QLineEdit` (180px 固定、clear ボタン付き) に文字を入れるたび `textChanged` → `_on_filter_changed()` → `proxy.setFilterFixedString(text)`。`Ctrl+F` で `_toolbar.focus_filter()` (フォーカス + selectAll)。
@@ -278,6 +299,7 @@ undo/redo 実行時は `_perform_move_silently()` で perform_move + DB/モデ�
 - `test_scanner.py` (6): 差分検出、非再帰、`.stocker` skip、`count_image_files` の走査範囲
 - `test_thumbnail_cache.py` (6): LRU、500 件しきい値、SHA1 命名
 - `test_thumbnail_model.py` (7): dedupe、PENDING → real リプレース、FS watcher 競合、ソート位置挿入 (name asc / mtime desc / paste 完了)
+- `test_thumbnail_view.py` (55): 列数 × ビューポート幅の総当たりで 1 行の個数が指定列数と一致すること、グリッド stride が余分な列を許さないこと
 - `test_paste_queue.py` (4): 30 件連打損失ゼロ、衝突回避
 - `test_clipboard_watcher.py` (9): フィンガープリント dedup、autocapture トグル、自己コピー抑制、起動シード
 - `test_move_service.py` (7): 同一/異ボリューム、衝突採番、進捗キャンセル、日本語

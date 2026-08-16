@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Callable
 
-from PySide6.QtCore import QPoint, QRect, Qt, Signal
+from PySide6.QtCore import QPoint, QRect, QSize, Qt, Signal
 from PySide6.QtGui import QDrag, QPixmap
 from PySide6.QtWidgets import QAbstractItemView, QListView
 
@@ -19,6 +19,13 @@ MAX_COLUMNS = 16
 # Hover preview only triggers when the cursor enters this fraction of the item
 # rect, anchored at the bottom-right. 0.4 means a ~16%-area corner trigger.
 HOVER_CORNER_FRAC = 0.4
+
+# Item sizeHint = (thumb_w + ITEM_MARGIN_W, thumb_h + ITEM_MARGIN_H); the grid
+# stride adds CELL_GAP on top so neighbouring cells do not touch.
+ITEM_MARGIN_W = 16
+ITEM_MARGIN_H = 32
+CELL_GAP = 4
+MIN_THUMB = 48
 
 ASPECT_RATIOS: dict[str, tuple[int, int]] = {
     "1:1": (1, 1),
@@ -39,7 +46,6 @@ class ThumbnailView(QListView):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._columns = 6
-        self._padding = 16
         self._aspect_w, self._aspect_h = ASPECT_RATIOS[DEFAULT_ASPECT]
         self.setViewMode(QListView.ViewMode.IconMode)
         self.setMovement(QListView.Movement.Static)
@@ -92,14 +98,37 @@ class ThumbnailView(QListView):
         super().resizeEvent(e)
         self._resize_debounce.call()
 
+    def _layout_width(self) -> int:
+        """Viewport width with the vertical scrollbar always accounted for.
+
+        The bar appearing/disappearing changes the viewport width, which would
+        otherwise flip the computed stride by one pixel and cost (or add) a column.
+        Reserving its width even while it is hidden keeps the value stable across
+        both states.
+        """
+        w = self.viewport().width()
+        sb = self.verticalScrollBar()
+        if sb is not None and not sb.isVisible():
+            w -= max(0, sb.sizeHint().width())
+        return w
+
     def _apply_size(self) -> None:
-        viewport_w = max(1, self.viewport().width())
-        cell_w = max(64, viewport_w // self._columns - self._padding)
-        thumb_w = max(48, cell_w - 16)
-        thumb_h = max(48, int(round(thumb_w * self._aspect_h / self._aspect_w)))
+        # With an explicit grid Qt fits `(viewport_w - 1) // grid_w` items per row
+        # (spacing does not enter the equation; a cell that exactly reaches the right
+        # edge already wraps), so the stride is that division inverted. The old
+        # formula subtracted a padding term from the stride instead, leaving enough
+        # slack for an 11th item to slip into a 10-column row.
+        viewport_w = max(1, self._layout_width())
+        stride_w = max(MIN_THUMB + ITEM_MARGIN_W + CELL_GAP,
+                       (viewport_w - 1) // self._columns)
+        thumb_w = max(MIN_THUMB, stride_w - ITEM_MARGIN_W - CELL_GAP)
+        thumb_h = max(MIN_THUMB, int(round(thumb_w * self._aspect_h / self._aspect_w)))
         model = self.model()
         if model is not None and hasattr(model, "set_cell_size"):
             model.set_cell_size(thumb_w, thumb_h)
+        # Pin the layout to an explicit grid: relying on sizeHint + spacing lets Qt
+        # derive the column count itself, which drifts from the requested value.
+        self.setGridSize(QSize(stride_w, thumb_h + ITEM_MARGIN_H + CELL_GAP))
         # Trigger layout refresh
         self.scheduleDelayedItemsLayout()
 

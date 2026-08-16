@@ -69,7 +69,7 @@ log = logging.getLogger(__name__)
 class MainWindow(QMainWindow):
     def __init__(self, cfg: AppConfig):
         super().__init__()
-        self.setWindowTitle("Clipboard Image Stocker")
+        self.setWindowTitle(f"Clipboard Image Stocker v{APP_VERSION}")
         self.resize(1280, 800)
 
         self._cfg = cfg
@@ -211,8 +211,12 @@ class MainWindow(QMainWindow):
         self.setStatusBar(QStatusBar(self))
         self._status_label = QLabel("", self)
         self._queue_label = QLabel("", self)
+        # Always-visible build identity (About dialog carries the full detail).
+        self._version_label = QLabel(f"v{APP_VERSION}", self)
+        self._version_label.setToolTip(f"{APP_NAME} v{APP_VERSION}")
         self.statusBar().addWidget(self._status_label, 1)
         self.statusBar().addPermanentWidget(self._queue_label)
+        self.statusBar().addPermanentWidget(self._version_label)
 
         # System tray (optional). Built only when the platform exposes a tray;
         # toggled via cfg.minimize_to_tray. Closing via the [X] button still
