@@ -1,0 +1,10 @@
+# Normalize line endings to LF in the repo and on checkout (Python/Qt project;
+# nothing here needs CRLF). Binary assets are left untouched.
+* text=auto eol=lf
+
+*.png  binary
+*.ico  binary
+*.webp binary
+*.jpg  binary
+*.jpeg binary
+*.gif  binary
