@@ -146,11 +146,17 @@ _CATALOG: dict[str, dict[str, str]] = {
         "ja": "<h3>Clipboard Image Stocker</h3>"
               "<p>バージョン: {version}<br>"
               "作者: {author}<br>"
-              "配布元: <a href=\"{url}\">{url}</a></p>",
+              "配布元: <a href=\"{url}\">{url}</a></p>"
+              "<p><small>本ソフトウェアは Qt for Python (PySide6) と Qt 6 を "
+              "LGPLv3 の条件で使用しています。ライセンス全文と第三者ソフトウェアの"
+              "表示は同梱の licenses フォルダを参照してください。</small></p>",
         "en": "<h3>Clipboard Image Stocker</h3>"
               "<p>Version: {version}<br>"
               "Author: {author}<br>"
-              "Homepage: <a href=\"{url}\">{url}</a></p>",
+              "Homepage: <a href=\"{url}\">{url}</a></p>"
+              "<p><small>This software uses Qt for Python (PySide6) and Qt 6 "
+              "under the LGPLv3. See the bundled licenses folder for the full "
+              "license texts and third-party notices.</small></p>",
     },
 
     # ---- sidebar ----

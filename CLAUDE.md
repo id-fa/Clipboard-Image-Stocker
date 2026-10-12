@@ -396,4 +396,13 @@ Twitter のペーストハンドラは `e.clipboardData.files` のみを見る�
 - `dist/Stocker/portable.flag` の有無で `userdata/` モードに切替 (`app_paths.is_portable()`)
 - `Stocker.exe` は約 2.8 MB のランチャ (アイコン埋込済) + `_internal/` (PySide6 ランタイム + `stocker/assets/icons/` + `stocker/db/schema.sql`)
 - バージョンは `pyproject.toml` の `version` と `app_paths.APP_VERSION` の 2 箇所を揃える運用 (前者は zip ファイル名 / 後者は About ダイアログ)
-- 配布は `build/make_portable.ps1` 1 コマンドで完結 (PyInstaller → portable.flag → Compress-Archive)
+- 配布は `build/make_portable.ps1` 1 コマンドで完結 (PyInstaller → portable.flag → ライセンス同梱 → Compress-Archive)
+
+### ライセンスファイルの同梱 (LGPLv3 対応)
+PySide6 / shiboken6 / Qt 6 は LGPLv3 で利用しているため、配布 zip にライセンス全文と通知を必ず同梱する。`make_portable.ps1` がビルド時に `dist/Stocker/LICENSE.txt` (アプリの MIT) と `dist/Stocker/licenses/` を生成:
+- `LGPL-3.0.txt` / `GPL-3.0.txt`: PySide6 の wheel は商用ライセンス参照 (`LicenseRef-Qt-Commercial.txt`) しか同梱しないので、GNU 公式の全文を `build/licenses/` にコミットして保持 (LGPLv3 は GPLv3 を取り込む形なので両方必要)
+- `Pillow-LICENSE.txt` / `PyInstaller-COPYING.txt`: venv の `*.dist-info/licenses/` から、`Python-LICENSE.txt`: `sys.base_prefix/LICENSE.txt` からコピー (常に同梱バージョンと一致)
+- `THIRD_PARTY_NOTICES.txt`: `build/licenses/THIRD_PARTY_NOTICES.template.txt` の `{PYSIDE6_VERSION}` 等のプレースホルダをビルド時に venv の実バージョンで置換して生成。未解決プレースホルダが残るとビルドが失敗する
+- About ダイアログ (`about.body`) にも LGPLv3 利用の一文を表示 (LGPLv3 §4 の「目立つ通知」)
+- `.gitignore` は `build/*` を無視するので `!build/licenses/` で例外化している。新しい依存を追加したらテンプレートと `Copy-DistInfoLicense` 呼び出しを足す
+- onedir 配布 (DLL が別ファイル) なのでライブラリ差し替えが可能 = LGPLv3 §4(d)(1) の shared library mechanism に該当。**onefile 化は LGPL 的に不利になるので採用しない**

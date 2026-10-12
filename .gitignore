@@ -12,6 +12,7 @@ dist/
 build/*
 !build/stocker.spec
 !build/make_portable.ps1
+!build/licenses/
 *.spec.bak
 .stocker/
 userdata/

@@ -57,6 +57,21 @@ X (Twitter) の Web UI のドロップハンドラは `e.dataTransfer.files` だ
 添付できます。Discord / Slack / GitHub / Gmail 等 D&D で問題が出ない先では従来どおり
 ドラッグ可能です。
 
+## ライセンス
+
+本アプリケーションは MIT License です ([LICENSE](LICENSE))。
+
+配布 zip には GUI フレームワークとして **Qt for Python (PySide6 / shiboken6) と Qt 6** が
+LGPLv3 の条件で同梱されています。`build/make_portable.ps1` が以下を zip に含めます:
+
+- `LICENSE.txt` — 本アプリの MIT License
+- `licenses/LGPL-3.0.txt`, `licenses/GPL-3.0.txt` — Qt / PySide6 のライセンス全文
+- `licenses/Pillow-LICENSE.txt`, `licenses/Python-LICENSE.txt`, `licenses/PyInstaller-COPYING.txt`
+- `licenses/THIRD_PARTY_NOTICES.txt` — 各コンポーネントのバージョン・ソース入手先・Qt ライブラリの差し替え方法
+
+Qt ライブラリは `_internal/PySide6/` と `_internal/shiboken6/` に別ファイル (DLL) として
+置かれているので、LGPLv3 が求めるとおり互換バージョンへ差し替え可能です。
+
 ## 関連
 
 [クリップボード処理に特化したEagleライクの画像ストッカーを作る - ふぁメモ](https://fa.hatenadiary.jp/entry/20260428/1777353925)
