@@ -4,7 +4,7 @@
 
 ## 開発環境
 
-- Python: **3.12.12** (Astral 経由)。`.venv/` がプロジェクト直下にある (`py -V:Astral/CPython3.12.12 -m venv .venv` で再作成可)
+- Python: **3.13.16** (python.org 公式ビルド、`C:\_BIN\python-3.13`、`py` のデフォルト)。`.venv/` がプロジェクト直下にある (`py -3.13 -m venv .venv` → `.venv/Scripts/python.exe -m pip install -r requirements-dev.txt` で再作成可)。`requires-python >= 3.12` / ruff・black・pyright の target は 3.12 のまま (下限互換を維持)
 - 依存: `requirements.txt` (PySide6, Pillow) + `requirements-dev.txt` (pytest, pytest-qt, pyinstaller, ruff, black)
 - `src` レイアウト: ランタイムは `pyproject.toml` の `[tool.pytest.ini_options].pythonpath = ["src"]`、IDE は `pyrightconfig.json` の `extraPaths`、テストは `tests/conftest.py` で sys.path 注入
 - 凍結中は `os.environ.setdefault("PYTHONUTF8", "1")` を `main.py` 先頭で設定済 (日本語パス対策)
@@ -15,7 +15,7 @@
 # 開発起動
 ./.venv/Scripts/python.exe -m stocker
 
-# テスト (149 件)
+# テスト (156 件)
 ./.venv/Scripts/python.exe -m pytest tests/
 
 # ポータブル zip ビルド (PyInstaller → portable.flag → Compress-Archive を一括)
@@ -81,6 +81,16 @@ Qt の折り返し規則 (グリッド有効時、実測):
 **垂直スクロールバーは常に幅を確保する** (`_layout_width()`)。バーの出現/消滅で viewport 幅が変わると stride が 1px ずれて列が 1 つ増減し、さらにセルサイズ変化がバーの出現条件を変えて発振する。隠れている間もバー幅を差し引くことで、どちらの状態でも同じ実効幅になり安定する。
 
 回帰テストは `tests/test_thumbnail_view.py`。
+
+### 列数のフォルダ別記憶
+列数スライダーの値は **フォルダ単位で記憶**される。`AppConfig.folder_columns: dict[str, int]` にワークスペース相対パス (forward-slash、ワークスペース基点は `"."`、ごみ箱は `".trash"`) をキーとして保持。純粋ロジックは `core/folder_columns.py` (`folder_key` / `lookup` / `remember` / `rename_subtree` / `drop_subtree`) に分離し Qt なしでテスト可能。
+
+- `MainWindow._on_columns_changed(n)` はグローバル `cfg.columns` (= 最後に使った値) に加えて `folder_columns[active_key] = n` を記録
+- `_activate_folder()` 先頭の `_apply_folder_columns(root)` が記憶値を復元。**記憶がないフォルダは直前の表示列数を引き継ぐ** (`cfg.columns` フォールバック) ので、スライダーは記憶を持つフォルダに入ったときだけ動く。プログラム的なスライダー移動は `toolbar.blockSignals(True)` で囲み、復元値が「ユーザー操作」として再記録されるのを防ぐ
+- フォルダリネーム時は `rename_subtree(old_rel, new_rel)` でサブツリーのキーを付け替え (trash_index の `rewrite_origin_paths` と同じ流儀)、フォルダ削除時は `drop_subtree(rel)` で掃除
+- 相対キーなのでワークスペースをディスク上で移動しても記憶は生きる。別ワークスペースに切り替えた場合は同名相対パスがあれば流用される (意図的、害はない)
+- `AppConfig.from_json` は壊れた形 (list / 非 int 値 / bool) を黙って捨てる
+- テスト: `tests/test_folder_columns.py`
 
 ### ファイル名フィルタ (インクリメンタルサーチ)
 ツールバーの「絞り込み」`QLineEdit` (180px 固定、clear ボタン付き) に文字を入れるたび `textChanged` → `_on_filter_changed()` → `proxy.setFilterFixedString(text)`。`Ctrl+F` で `_toolbar.focus_filter()` (フォーカス + selectAll)。
@@ -272,6 +282,7 @@ undo/redo 実行時は `_perform_move_silently()` で perform_move + DB/モデ�
 | `src/stocker/db/metadata_db.py` | フォルダごとの SQLite (WAL, mmap, bulk upsert) |
 | `src/stocker/core/folder_manager.py` | workspace + サブフォルダ管理 (作成 / リネーム / 削除) |
 | `src/stocker/core/scanner.py` | 非再帰 diff スキャン + `count_image_files()` (サイドバー件数表示用) |
+| `src/stocker/core/folder_columns.py` | 列数のフォルダ別記憶 (ワークスペース相対キー、リネーム/削除追従) |
 | `src/stocker/core/paste_queue.py` | クリップボード貼り付けキュー (核心) |
 | `src/stocker/core/clipboard_watcher.py` | Ctrl+V のブリッジ + 自動取込 (フィンガープリント dedup) |
 | `src/stocker/core/thumbnail_cache.py` | LRU + ディスクキャッシュ協調 |
@@ -308,6 +319,7 @@ undo/redo 実行時は `_perform_move_silently()` で perform_move + DB/モデ�
 - `test_clipboard_files.py` (5): URL roundtrip、DropEffect バイト列確認、画像コピー
 - `test_i18n.py` (8): ja/en 切替、format kwargs、未知キーフォールバック、`detect_language()` ホスト非依存
 - `test_undo_manager.py` (7): 初期空、record で redo クリア、roundtrip、新 op で redo クリア、1 世代のみ、clear、count フィールド整合
+- `test_folder_columns.py` (7): キー導出 (root/サブ/trash/外部)、clamp、リネーム prefix 付け替え、サブツリー削除、config roundtrip + 壊れた JSON の無害化
 
 ## 既知の癖・注意点
 
@@ -357,7 +369,8 @@ Twitter のペーストハンドラは `e.clipboardData.files` のみを見る�
 ## ユーザー設定の永続化
 
 `AppConfig` (`src/stocker/config.py`):
-- `workspace_root`, `last_active_root`, `columns` (1〜16), `sort_key/dir`
+- `workspace_root`, `last_active_root`, `columns` (1〜16, 最後に使った値 = 記憶のないフォルダの初期値), `sort_key/dir`
+- `folder_columns` (dict[str, int]) — フォルダ別の列数。キーはワークスペース相対パス (`"."` = 基点)
 - `thumbnail_aspect` ("1:1"|"4:3"|"16:9"|"3:4"|"9:16", default "1:1") — サムネイルセルのアスペクト比
 - `sidebar_font_size` (7〜28pt)
 - `paste_format` ("png"|"jpeg"), `paste_jpeg_quality`

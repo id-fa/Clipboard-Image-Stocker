@@ -28,6 +28,7 @@ from PySide6.QtWidgets import (
 from stocker.app_paths import APP_AUTHOR, APP_HOMEPAGE, APP_NAME, APP_VERSION, HIDDEN_DIR_NAMES
 from stocker.config import AppConfig, save_config
 from stocker.i18n import tr
+from stocker.core import folder_columns as fcols
 from stocker.core.clipboard_watcher import ClipboardWatcher
 from stocker.core.folder_manager import FolderManager
 from stocker.core.fs_watcher import FolderWatcher
@@ -373,6 +374,9 @@ class MainWindow(QMainWindow):
 
         new_rel = normalize_rel(new_path.relative_to(ws_resolved))
         trash_svc.rewrite_origin_paths(ws, old_rel, new_rel)
+        self._cfg.folder_columns = fcols.rename_subtree(
+            self._cfg.folder_columns, old_rel, new_rel
+        )
 
         # Translate the active path if it was inside the renamed subtree.
         new_active = old_active
@@ -473,6 +477,13 @@ class MainWindow(QMainWindow):
                 self._sidebar.update_trash_count(trash_svc.trash_count(ws))
             return
 
+        target_rel = fcols.folder_key(ws, target)
+        if target_rel is not None:
+            self._cfg.folder_columns = fcols.drop_subtree(
+                self._cfg.folder_columns, target_rel
+            )
+            save_config(self._cfg)
+
         self._refresh_sidebar()
         if active_in_subtree:
             self._activate_folder(ws)
@@ -530,6 +541,7 @@ class MainWindow(QMainWindow):
 
     def _activate_folder(self, root: Path) -> None:
         self._active_root = root.resolve()
+        self._apply_folder_columns(self._active_root)
         db = self._db(self._active_root)
         self._cache.clear()
         self._cache.configure(self._active_root, db.count_files())
@@ -584,7 +596,33 @@ class MainWindow(QMainWindow):
     def _on_columns_changed(self, n: int) -> None:
         self._view.set_columns(n)
         self._cfg.columns = n
+        fcols.remember(self._cfg.folder_columns, self._folder_columns_key(), n)
         save_config(self._cfg)
+
+    def _folder_columns_key(self, root: Path | None = None) -> str | None:
+        root = root if root is not None else self._active_root
+        if root is None:
+            return None
+        return fcols.folder_key(self._folder_manager.workspace, root)
+
+    def _apply_folder_columns(self, root: Path) -> None:
+        """Restore the column count remembered for *root* (fallback: last used).
+
+        Folders without an entry inherit whatever is currently shown, so the
+        slider only moves when the target folder has its own memory.
+        """
+        n = fcols.lookup(self._cfg.folder_columns, self._folder_columns_key(root))
+        if n is None:
+            n = self._cfg.columns
+        if n == self._toolbar.columns():
+            return
+        # Programmatic slider move must not re-enter _on_columns_changed,
+        # which would write the restored value back as a per-folder memory.
+        self._toolbar.blockSignals(True)
+        self._toolbar.set_columns(n)
+        self._toolbar.blockSignals(False)
+        self._view.set_columns(n)
+        self._cfg.columns = n
 
     def _on_aspect_changed(self, ratio: str) -> None:
         if ratio == self._cfg.thumbnail_aspect:

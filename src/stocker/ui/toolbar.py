@@ -160,6 +160,9 @@ class StockerToolbar(QToolBar):
     def set_columns(self, n: int) -> None:
         self._slider.setValue(max(1, min(16, n)))
 
+    def columns(self) -> int:
+        return self._slider.value()
+
     def set_aspect(self, ratio: str) -> None:
         idx = self._aspect.findData(ratio)
         if idx >= 0:

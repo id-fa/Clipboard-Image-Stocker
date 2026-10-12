@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 from stocker.app_paths import config_path, ensure_user_data_dir
@@ -14,7 +14,9 @@ class AppConfig:
     # Workspace model: a single base folder; managed folders are subdirectories.
     workspace_root: str | None = None
     last_active_root: str | None = None  # active subfolder (or workspace itself)
-    columns: int = 6
+    columns: int = 6  # default / last-used column count
+    # Per-folder column memory keyed by workspace-relative path ("." = root).
+    folder_columns: dict[str, int] = field(default_factory=dict)
     thumbnail_aspect: str = "1:1"  # "1:1" | "4:3" | "16:9" | "3:4" | "9:16"
     sort_key: str = "name"  # "name" or "mtime" or "added"
     sort_dir: str = "asc"  # "asc" or "desc"
@@ -40,6 +42,14 @@ class AppConfig:
         data = json.loads(text)
         known = {f for f in cls.__dataclass_fields__}
         filtered = {k: v for k, v in data.items() if k in known}
+        fc = filtered.get("folder_columns")
+        if isinstance(fc, dict):
+            filtered["folder_columns"] = {
+                str(k): int(v) for k, v in fc.items()
+                if isinstance(v, int) and not isinstance(v, bool)
+            }
+        else:
+            filtered.pop("folder_columns", None)
         return cls(**filtered)
 
 
